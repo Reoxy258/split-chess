@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const E = SplitChess, $ = id => document.getElementById(id);
-  const SIZE = E.BOARD_SIZE, CENTER = Math.floor(SIZE / 2) - 1, TRAINING_CELL = CENTER * SIZE + CENTER;
+  let SIZE = E.BOARD_SIZE, TRAINING_CELL = 0;
   const KEY = 'split-chess.save.v1', SEEN = 'split-chess.learned.v1';
   const read = key => { try { return localStorage.getItem(key); } catch { return null; } };
   const write = (key, value) => { try { localStorage.setItem(key, value); return true; } catch { return false; } };
@@ -10,38 +10,90 @@
   let quick = matchMedia('(prefers-reduced-motion: reduce)').matches, tutorial = -1, tutorialDone = false, beforeTutorial = null, pending = null;
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const buttons = [];
-  let restored = false;
+  let restored = false, clock = E.newClock(), lastTick = performance.now(), lastSave = lastTick;
   try {
     const saved = JSON.parse(read(KEY));
-    if (saved && saved.version === 1 && [6, SIZE].includes(saved.state.size) && E.validateState(saved.state) && ['ai', 'local'].includes(saved.mode)) {
-      state = E.expandState(saved.state); mode = saved.mode; quick = typeof saved.quick === 'boolean' ? saved.quick : quick;
-      history = Array.isArray(saved.history) ? saved.history.filter(s => E.validateState(s) && [6, SIZE].includes(s.size)).map(s => E.expandState(s)).slice(-60) : [];
+    if (saved && [1, 2].includes(saved.version) && saved.state?.size >= 5 && saved.state.size <= 10 && E.validateState(saved.state) && ['ai', 'local'].includes(saved.mode)) {
+      state = E.copy(saved.state);
+      clock = saved.version === 2 && E.validateClock(saved.clock, state.size) ? { ...saved.clock, paused: saved.clock.started } : E.newClock(state.size); mode = saved.mode; quick = typeof saved.quick === 'boolean' ? saved.quick : quick;
+      history = Array.isArray(saved.history) ? saved.history.filter(s => E.validateState(s) && s.size === state.size).map(E.copy).slice(-60) : [];
       restored = true;
     }
   } catch { /* Unavailable or damaged storage starts a fresh match. */ }
   function persist() {
     if (tutorial >= 0) return;
-    const ok = write(KEY, JSON.stringify({ version: 1, state, mode, quick, history: history.slice(-60) }));
+    const ok = write(KEY, JSON.stringify({ version: 2, state, mode, quick, clock, history: history.slice(-60) }));
     $('save-note').textContent = ok ? '棋局已自动保存' : '当前浏览器无法保存';
+  }
+
+  function clockBlocked() {
+    return busy || tutorial >= 0 || document.hidden || ['welcome-dialog', 'rules-dialog', 'confirm-dialog'].some(id => $(id).open);
+  }
+  function renderClock() {
+    const format = value => { const seconds = Math.ceil(value / 1000); return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0'); };
+    $('match-time').textContent = format(clock.remaining);
+    $('turn-time').textContent = Math.ceil(clock.turnRemaining / 1000) + '秒';
+    $('turn-time-label').textContent = (state.turn === 1 ? '蓝方' : '橙方') + '本手';
+    $('clock-phase').textContent = clock.overtime ? '加时第 ' + clock.overtime + ' 轮' : '整局剩余';
+    $('clock-bar').classList.toggle('urgent', clock.started && !state.winner && !clock.paused && clock.turnRemaining <= 5000);
+    $('clock-note').textContent = tutorial >= 0 ? '教程不计时' : state.winner ? '对局结束' : !clock.started ? '首次落子或点击开始计时' : clock.paused ? '已暂停 · 点击继续对局' : busy ? '连锁结算中 · 计时暂停' : '到时比点数，同分加时1分钟';
+    $('clock-button').textContent = !clock.started ? '开始计时' : clock.paused ? '继续对局' : '暂停';
+    $('clock-button').disabled = busy || tutorial >= 0 || !!state.winner;
+    const limits = E.timeControl(SIZE);
+    $('time-plan').textContent = '整局 ' + limits.match / 60000 + ' 分钟 · 每手 ' + limits.turn / 1000 + ' 秒；超时跳过本回合。';
+  }
+  function syncClock() {
+    const now = performance.now(), elapsed = Math.max(0, now - lastTick); lastTick = now;
+    if (!clockBlocked()) {
+      const result = E.advanceClock(state, clock, elapsed);
+      state = result.state; clock = result.clock;
+      if (result.events.length) {
+        cancelAsync(); paint(); resetCoach(); normalStatus();
+        if (result.events.includes('overtime') && !state.winner) status('双方点数相同，加时一分钟 · 第 ' + clock.overtime + ' 轮加时');
+        else if (result.events.includes('turn') && !state.winner) status((state.turn === 1 ? '橙方' : '蓝方') + '超时，跳过本回合 · 轮到' + (state.turn === 1 ? '蓝方' : '橙方'));
+        persist(); scheduleAI();
+      }
+    }
+    renderClock();
+    if (!busy && tutorial < 0 && clock.started && now - lastSave >= 1000) { lastSave = now; persist(); }
+  }
+  function pauseMatch() {
+    syncClock();
+    if (clock.started && !state.winner) clock.paused = true;
+    if (thinking) cancelAsync();
+    lastTick = performance.now(); paint(); persist();
   }
   function cancelAsync() {
     epoch++;
     worker?.terminate(); worker = null; thinking = false; busy = false;
     $('flights').replaceChildren();
   }
-  for (let i = 0; i < SIZE * SIZE; i++) {
-    const b = document.createElement('button');
-    b.type = 'button'; b.className = 'cell'; b.dataset.index = i;
-    b.addEventListener('click', () => onCell(i));
-    // Arrow keys complement native button Enter/Space activation.
-    b.addEventListener('keydown', event => {
-      const offsets = { ArrowUp: -SIZE, ArrowDown: SIZE, ArrowLeft: -1, ArrowRight: 1 };
-      if (!(event.key in offsets)) return;
-      event.preventDefault();
-      let next = i + offsets[event.key];
-      if (next >= 0 && next < SIZE * SIZE && (Math.abs(offsets[event.key]) === SIZE || Math.floor(next / SIZE) === Math.floor(i / SIZE))) buttons[next].focus();
-    });
-    buttons.push(b); $('board').append(b);
+  function buildBoard() {
+    SIZE = state.size;
+    const center = Math.floor((SIZE - 1) / 2); TRAINING_CELL = center * SIZE + center;
+    buttons.length = 0; $('board').replaceChildren();
+    $('board').style.setProperty('--size', SIZE);
+    $('board-surface').style.minWidth = (SIZE * 46) + 'px';
+    $('board').setAttribute('aria-label', SIZE + '行' + SIZE + '列棋盘');
+    $('flights').setAttribute('viewBox', '0 0 ' + SIZE * 100 + ' ' + SIZE * 100);
+    $('board-size').value = String(SIZE);
+    $('size-label').textContent = SIZE + ' × ' + SIZE;
+    $('board-pan-note').textContent = '↔ 左右滑动棋盘，查看完整的 ' + SIZE + ' × ' + SIZE + ' 棋局';
+    for (let i = 0; i < SIZE * SIZE; i++) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'cell'; b.dataset.index = i;
+      b.addEventListener('click', () => onCell(i));
+      // Arrow keys complement native button Enter/Space activation.
+      b.addEventListener('keydown', event => {
+        const offsets = { ArrowUp: -SIZE, ArrowDown: SIZE, ArrowLeft: -1, ArrowRight: 1 };
+        if (!(event.key in offsets)) return;
+        event.preventDefault();
+        let next = i + offsets[event.key];
+        if (next >= 0 && next < SIZE * SIZE && (Math.abs(offsets[event.key]) === SIZE || Math.floor(next / SIZE) === Math.floor(i / SIZE))) buttons[next].focus();
+      });
+      buttons.push(b); $('board').append(b);
+    }
+    updatePanHint();
   }
   function updatePanHint() {
     const wrap = $('board-wrap');
@@ -56,13 +108,13 @@
     }
   }
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(updatePanHint).observe($('board-wrap'));
-  updatePanHint();
+  buildBoard();
   function pips(count) {
     if (!count) return '';
     return '<span class="pips n' + Math.min(count, 4) + '" aria-hidden="true">' + '<i class="pip"></i>'.repeat(Math.min(count, 4)) + '</span>';
   }
   function paint(cells = state.cells, fx = {}) {
-    const locked = busy || thinking || state.winner || (tutorial >= 0 && tutorialDone);
+    const locked = busy || thinking || state.winner || (tutorial < 0 && clock.paused) || (tutorial >= 0 && tutorialDone);
     $('board').classList.toggle('locked', busy || thinking);
     $('board').setAttribute('aria-busy', String(busy || thinking));
     cells.forEach((c, i) => {
@@ -92,16 +144,19 @@
     $('mode-ai').setAttribute('aria-pressed', String(mode === 'ai'));
     $('mode-local').setAttribute('aria-pressed', String(mode === 'local'));
     $('mode-description').textContent = mode === 'ai' ? '你执蓝方先手，电脑执橙方。' : '两人共用屏幕，蓝方先手，轮流落子。';
-    $('undo-button').disabled = !history.length || busy || tutorial >= 0;
+    $('undo-button').disabled = !history.length || busy || tutorial >= 0 || state.resultReason === 'time';
     $('motion-button').textContent = '连锁动画：' + (quick ? '快速' : '标准');
     $('motion-button').setAttribute('aria-pressed', String(quick));
     $('exit-tutorial').hidden = tutorial < 0;
+    $('board-size').disabled = tutorial >= 0;
     document.body.classList.toggle('tutorial', tutorial >= 0);
     document.body.classList.toggle('result', !!state.winner && tutorial < 0);
+    renderClock();
   }
   function status(text) { $('status').textContent = text; }
   function normalStatus() {
-    if (state.winner) status((mode === 'ai' ? state.winner === 1 ? '你赢了！' : '电脑赢下了这一局。' : (state.winner === 1 ? '蓝方' : '橙方') + '获胜！') + ' 对方棋子已全部清空');
+    if (state.winner) status((mode === 'ai' ? state.winner === 1 ? '你赢了！' : '电脑赢下了这一局。' : (state.winner === 1 ? '蓝方' : '橙方') + '获胜！') + (state.resultReason === 'time' ? ' 时间到，点数 ' + E.totals(state).points.join(' : ') : ' 对方棋子已全部清空'));
+    else if (clock.paused && tutorial < 0) status('棋局已暂停 · 点击继续对局恢复计时');
     else if (thinking) status('电脑正在思考下一步…');
     else if (state.ply === 0) status('点一个空格，放下你的第一颗棋子');
     else status((mode === 'ai' ? state.turn === 1 ? '轮到你了' : '轮到电脑了' : '轮到' + (state.turn === 1 ? '蓝方' : '橙方')) + ' · 点空格或己方格，增加一点');
@@ -126,6 +181,8 @@
     }
   }
   async function play(index) {
+    const expectedEpoch = epoch, expectedTurn = state.turn;
+    if (tutorial < 0) { syncClock(); if (clock.paused || state.winner || epoch !== expectedEpoch || state.turn !== expectedTurn) return; clock.started = true; }
     const id = epoch, player = state.turn;
     let result;
     try { result = E.applyMove(state, index, { trace: true }); } catch { return; }
@@ -149,6 +206,8 @@
     $('flights').replaceChildren();
     if (tutorial < 0) history = [...history, previous].slice(-60);
     state = result.state; busy = false;
+    if (tutorial < 0) clock.turnRemaining = E.timeControl(state.size).turn;
+    lastTick = performance.now();
     if (tutorial >= 0) {
       state.turn = 1;
       tutorialDone = true;
@@ -165,6 +224,8 @@
     scheduleAI();
   }
   function onCell(i) {
+    const expectedTurn = state.turn, expectedEpoch = epoch;
+    if (tutorial < 0) { syncClock(); if (clock.paused || state.turn !== expectedTurn || epoch !== expectedEpoch) return; }
     if (busy || thinking || state.winner || (tutorial >= 0 && tutorialDone)) return;
     if (tutorial >= 0 && i !== TRAINING_CELL) { status('点蓝色描边的格子，试试这一课的动作'); return; }
     if (mode === 'ai' && state.turn === 2 && tutorial < 0) return;
@@ -176,7 +237,7 @@
     void play(i);
   }
   function scheduleAI() {
-    if (mode !== 'ai' || state.turn !== 2 || state.winner || tutorial >= 0 || busy || thinking) return;
+    if (clock.paused || clockBlocked() || mode !== 'ai' || state.turn !== 2 || state.winner || tutorial >= 0 || busy || thinking) return;
     const id = epoch;
     thinking = true; paint(); normalStatus();
     setTimeout(() => {
@@ -194,7 +255,7 @@
       const fallback = () => { if (!settled && id === epoch) finish(E.chooseMove(state)); };
       try {
         if (location.protocol === 'file:' || typeof Worker === 'undefined') { fallback(); return; }
-        worker = new Worker('ai-worker.js?v=1.0.2');
+        worker = new Worker('ai-worker.js?v=1.1.0');
         worker.onmessage = event => event.data.error ? fallback() : finish(event.data.index);
         worker.onerror = event => { event.preventDefault(); fallback(); };
         worker.postMessage(state);
@@ -210,7 +271,7 @@
   ];
   function loadLesson(n) {
     cancelAsync(); tutorial = n; tutorialDone = false;
-    state = E.newGame();
+    state = E.newGame({ size: SIZE });
     if (n >= 1) state.cells[TRAINING_CELL] = { owner: 1, count: 3 };
     if (n === 2) state.cells[TRAINING_CELL + 1] = { owner: 2, count: 2 };
     if (n === 3) { state.cells[TRAINING_CELL + 1] = { owner: 2, count: 3 }; state.cells[TRAINING_CELL + SIZE + 1] = { owner: 2, count: 3 }; }
@@ -224,32 +285,44 @@
   }
   function startTutorial() {
     if (tutorial >= 0) return;
+    syncClock();
     cancelAsync();
-    beforeTutorial = { state: E.copy(state), mode, history: history.map(E.copy) };
+    if (clock.started) clock.paused = true;
+    beforeTutorial = { state: E.copy(state), mode, clock: { ...clock }, history: history.map(E.copy) };
     loadLesson(0);
     $('coach').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
   function exitTutorial() {
     cancelAsync(); tutorial = -1; tutorialDone = false;
     state = beforeTutorial?.state || E.newGame(); mode = beforeTutorial?.mode || mode; history = beforeTutorial?.history || [];
-    beforeTutorial = null; write(SEEN, '1');
+    clock = beforeTutorial?.clock || E.newClock(state.size);
+    beforeTutorial = null; lastTick = performance.now(); buildBoard(); write(SEEN, '1');
     $('coach-action').disabled = false;
     paint(); persist(); resetCoach(); normalStatus(); scheduleAI();
   }
-  function startNew(nextMode = mode) {
+  function startNew(nextMode = mode, size = SIZE) {
     cancelAsync();
     if (tutorial >= 0) { tutorial = -1; beforeTutorial = null; tutorialDone = false; }
-    state = E.newGame(); history = []; mode = nextMode;
+    state = E.newGame({ size }); clock = E.newClock(size); lastTick = performance.now(); history = []; mode = nextMode;
+    buildBoard();
     $('coach-action').disabled = false;
     paint(); persist(); resetCoach(); normalStatus();
   }
-  function askNew(nextMode) {
-    if (!state.ply && !busy && tutorial < 0) { startNew(nextMode); return; }
-    pending = () => startNew(nextMode);
-    $('confirm-title').textContent = tutorial >= 0 ? '退出教程，开始新棋局？' : nextMode !== mode ? '切换模式，开始新棋局？' : '重新开始这一局？';
-    $('confirm-copy').textContent = tutorial >= 0 ? '选择继续当前棋局，可以留在教程中。' : '当前棋局会被替换。选择继续可保留进度。';
+  function askNew(nextMode, size = SIZE) {
+    if (!state.ply && !clock.started && !busy && tutorial < 0) { startNew(nextMode, size); return; }
+    pauseMatch();
+    pending = () => startNew(nextMode, size);
+    $('confirm-title').textContent = size !== SIZE ? '切换为 ' + size + ' × ' + size + ' 新棋局？' : tutorial >= 0 ? '退出教程，开始新棋局？' : nextMode !== mode ? '切换模式，开始新棋局？' : '重新开始这一局？';
+    $('confirm-copy').textContent = tutorial >= 0 ? '选择保留当前棋局，可以留在教程中。' : '当前棋局会被替换。选择保留可留下当前进度，计时保持暂停。';
     $('confirm-dialog').showModal();
   }
+  $('board-size').onchange = () => { const size = Number($('board-size').value); $('board-size').value = String(SIZE); if (Number.isInteger(size) && size >= 5 && size <= 10 && size !== SIZE) askNew(mode, size); };
+  $('clock-button').onclick = () => {
+    if (busy || tutorial >= 0 || state.winner) return;
+    syncClock(); if (state.winner) return;
+    if (!clock.started || clock.paused) { clock.started = true; clock.paused = false; lastTick = performance.now(); paint(); normalStatus(); persist(); scheduleAI(); }
+    else { pauseMatch(); normalStatus(); }
+  };
   $('exit-tutorial').onclick = exitTutorial;
   $('mode-ai').onclick = () => { if (mode !== 'ai') askNew('ai'); };
   $('mode-local').onclick = () => { if (mode !== 'local') askNew('local'); };
@@ -257,7 +330,7 @@
   $('confirm-cancel').onclick = () => { pending = null; $('confirm-dialog').close(); };
   $('confirm-ok').onclick = () => { const action = pending; pending = null; $('confirm-dialog').close(); action?.(); };
   $('confirm-dialog').addEventListener('cancel', () => { pending = null; });
-  $('help-button').onclick = () => $('rules-dialog').showModal();
+  $('help-button').onclick = () => { pauseMatch(); $('rules-dialog').showModal(); };
   document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => b.closest('dialog').close());
   $('replay-tutorial').onclick = () => { $('rules-dialog').close(); startTutorial(); };
   $('coach-action').onclick = () => {
@@ -267,7 +340,8 @@
   };
   $('motion-button').onclick = () => { quick = !quick; paint(); persist(); };
   $('undo-button').onclick = () => {
-    if (busy || !history.length || tutorial >= 0) return;
+    if (busy || !history.length || tutorial >= 0 || state.resultReason === 'time') return;
+    syncClock(); if (state.resultReason === 'time') return;
     cancelAsync();
     state = history.pop();
     if (mode === 'ai' && state.turn === 2 && history.length) state = history.pop();
@@ -281,12 +355,12 @@
   $('welcome-play').onclick = () => dismissWelcome(false);
   $('welcome-skip').onclick = () => dismissWelcome(false);
   $('welcome-dialog').addEventListener('cancel', () => { write(SEEN, '1'); scheduleAI(); });
-  window.addEventListener('pagehide', persist);
+  window.addEventListener('pagehide', () => { pauseMatch(); persist(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) pauseMatch(); else lastTick = performance.now(); });
+  setInterval(syncClock, 200);
   paint(); resetCoach(); normalStatus();
   if (restored) persist();
-  if (restored && !state.winner) status('已恢复上次棋局 · ' + (mode === 'ai' ? '轮到' + (state.turn === 1 ? '你' : '电脑') : (state.turn === 1 ? '蓝方' : '橙方') + '落子'));
+  if (restored && !state.winner && !clock.paused) status('已恢复上次棋局 · ' + (mode === 'ai' ? '轮到' + (state.turn === 1 ? '你' : '电脑') : (state.turn === 1 ? '蓝方' : '橙方') + '落子'));
   if (!read(SEEN) && !restored) $('welcome-dialog').showModal();
   else scheduleAI();
 })();
-
-

@@ -1,7 +1,7 @@
 /* Deterministic rules shared by browser, worker, and tests. */
 (function (root) {
   'use strict';
-  const BOARD_SIZE = 10;
+  const BOARD_SIZE = 7;
   const copy = s => ({ ...s, cells: s.cells.map(c => ({ ...c })), moves: [...s.moves] });
   function newGame({ size = BOARD_SIZE } = {}) {
     if (!Number.isInteger(size) || size < 2 || size > 10) throw new Error('Invalid board size');
@@ -13,7 +13,7 @@
       s.cells.every(c => c && Number.isInteger(c.count) && c.count >= 0 && c.count <= 3 && [0, 1, 2].includes(c.owner) && ((c.count === 0) === (c.owner === 0))) &&
       [1, 2].includes(s.turn) && [0, 1, 2].includes(s.winner) && Array.isArray(s.moves) && s.moves.length === 2 &&
       s.moves.every(n => Number.isSafeInteger(n) && n >= 0) && Number.isSafeInteger(s.ply) && s.ply >= 0 &&
-      s.moves[0] + s.moves[1] === s.ply && Number.isInteger(s.lastMove) && s.lastMove >= -1 && s.lastMove < s.cells.length;
+      (s.skipped === undefined || (Number.isSafeInteger(s.skipped) && s.skipped >= 0)) && s.moves[0] + s.moves[1] + (s.skipped || 0) === s.ply && Number.isInteger(s.lastMove) && s.lastMove >= -1 && s.lastMove < s.cells.length;
   }
   function expandState(input, size = BOARD_SIZE) {
     if (!validateState(input) || !Number.isInteger(size) || size > 10 || size < input.size || (size - input.size) % 2) throw new Error('Invalid board expansion');
@@ -112,7 +112,53 @@
     }
     return best;
   }
-  const api = { BOARD_SIZE, expandState, newGame, validateState, neighbors, legalMoves, totals, applyMove, chooseMove, copy };
+
+  // Times are milliseconds. Turn passes do not count as an actual placement.
+  const TIME_LIMITS = Object.freeze({ 5: [180, 15], 6: [240, 18], 7: [300, 20], 8: [360, 22], 9: [480, 25], 10: [600, 30] });
+  function timeControl(size) {
+    const limits = TIME_LIMITS[size];
+    if (!limits) throw new Error('Unsupported timed board');
+    return { match: limits[0] * 1000, turn: limits[1] * 1000 };
+  }
+  function newClock(size = BOARD_SIZE) {
+    const limits = timeControl(size);
+    return { remaining: limits.match, turnRemaining: limits.turn, overtime: 0, started: false, paused: false };
+  }
+  function validateClock(clock, size) {
+    if (!TIME_LIMITS[size] || !clock) return false;
+    const limits = timeControl(size);
+    return Number.isFinite(clock.remaining) && clock.remaining >= 0 && clock.remaining <= Math.max(limits.match, 60000) &&
+      Number.isFinite(clock.turnRemaining) && clock.turnRemaining >= 0 && clock.turnRemaining <= limits.turn &&
+      Number.isSafeInteger(clock.overtime) && clock.overtime >= 0 &&
+      typeof clock.started === 'boolean' && typeof clock.paused === 'boolean';
+  }
+  function advanceClock(input, inputClock, elapsed) {
+    if (!validateClock(inputClock, input.size) || !Number.isFinite(elapsed) || elapsed < 0) throw new Error('Invalid clock');
+    let state = input;
+    const clock = { ...inputClock }, events = [];
+    if (state.winner || !clock.started || clock.paused) return { state, clock, events };
+    let left = elapsed;
+    do {
+      const consumed = Math.min(left, clock.remaining, clock.turnRemaining);
+      clock.remaining -= consumed; clock.turnRemaining -= consumed; left -= consumed;
+      // The match deadline takes priority over a simultaneous turn deadline.
+      if (clock.remaining <= 0) {
+        const points = totals(state).points;
+        if (points[0] !== points[1]) {
+          state = { ...copy(state), winner: points[0] > points[1] ? 1 : 2, resultReason: 'time' };
+          events.push('time'); break;
+        }
+        clock.remaining = 60000; clock.overtime++; events.push('overtime');
+      }
+      if (clock.turnRemaining <= 0) {
+        state = { ...copy(state), turn: 3 - state.turn, ply: state.ply + 1, skipped: (state.skipped || 0) + 1, lastMove: -1 };
+        clock.turnRemaining = timeControl(state.size).turn;
+        events.push('turn');
+      }
+    } while (left > 0);
+    return { state, clock, events };
+  }
+  const api = { TIME_LIMITS, timeControl, newClock, validateClock, advanceClock, BOARD_SIZE, expandState, newGame, validateState, neighbors, legalMoves, totals, applyMove, chooseMove, copy };
   root.SplitChess = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(globalThis);

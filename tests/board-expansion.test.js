@@ -21,16 +21,14 @@ function oldMatch() {
   return s;
 }
 
-test('default board has 100 independent cells and 100 legal opening moves', () => {
-  assert.equal(E.BOARD_SIZE, 10);
-  const s = E.newGame();
-  assert.equal(s.size, 10); assert.equal(s.cells.length, 100);
-  assert.equal(new Set(s.cells).size, 100);
-  assert.ok(E.validateState(s)); assert.equal(E.legalMoves(s).length, 100);
-  const after = E.applyMove(s, 99).state;
-  assert.deepEqual(after.cells[99], { owner: 1, count: 1 });
-  assert.equal(after.lastMove, 99); assert.equal(after.winner, 0);
-  assert.deepEqual(s.cells[99], { owner: 0, count: 0 });
+test('recommended board has 49 independent cells and 49 legal opening moves', () => {
+  assert.equal(E.BOARD_SIZE, 7); const s = E.newGame();
+  assert.equal(s.size, 7); assert.equal(s.cells.length, 49);
+  assert.equal(new Set(s.cells).size, 49); assert.ok(E.validateState(s));
+  assert.equal(E.legalMoves(s).length, 49);
+  const after = E.applyMove(s, 48).state;
+  assert.deepEqual(after.cells[48], { owner: 1, count: 1 });
+  assert.deepEqual(s.cells[48], { owner: 0, count: 0 });
 });
 
 test('10x10 four edges and corners have correct neighbors without row wrap', () => {
@@ -39,7 +37,7 @@ test('10x10 four edges and corners have correct neighbors without row wrap', () 
     [44, [34, 43, 45, 54]]];
   for (const [i, expected] of cases) {
     assert.deepEqual(E.neighbors(i, 10).sort((a, b) => a - b), expected);
-    const s = E.newGame(); s.cells[i] = { owner: 1, count: 3 };
+    const s = E.newGame({ size: 10 }); s.cells[i] = { owner: 1, count: 3 };
     const r = E.applyMove(s, i);
     assert.equal(r.lost, 4 - expected.length); assert.equal(r.splits, 1);
     assert.deepEqual(r.state.cells.flatMap((c, j) => c.count ? [j] : []), expected);
@@ -48,7 +46,7 @@ test('10x10 four edges and corners have correct neighbors without row wrap', () 
 });
 
 test('6 to 10 expansion adds exactly two empty rows and columns on every side', () => {
-  const input = frozen(oldMatch()), before = clone(input), output = E.expandState(input);
+  const input = frozen(oldMatch()), before = clone(input), output = E.expandState(input, 10);
   assert.ok(E.validateState(output)); assert.equal(output.size, 10);
   assert.equal(output.lastMove, 44);
   for (const k of ['turn', 'ply', 'winner']) assert.equal(output[k], input[k]);
@@ -69,11 +67,11 @@ test('6 to 10 expansion adds exactly two empty rows and columns on every side', 
 
 test('empty, same-size and intermediate expansions preserve sentinel and allocate independent state', () => {
   const old = E.newGame({ size: 6 });
-  assert.equal(E.expandState(old).lastMove, -1);
-  const current = frozen(E.newGame()), same = E.expandState(current);
+  assert.equal(E.expandState(old, 10).lastMove, -1);
+  const current = frozen(E.newGame({ size: 10 })), same = E.expandState(current, 10);
   assert.deepEqual(same, current); assert.notEqual(same, current);
   assert.notEqual(same.cells, current.cells); assert.notEqual(same.moves, current.moves);
-  const direct = E.expandState(oldMatch());
+  const direct = E.expandState(oldMatch(), 10);
   const viaEight = E.expandState(E.expandState(oldMatch(), 8), 10);
   assert.deepEqual(viaEight, direct);
 });
@@ -84,7 +82,7 @@ test('finished-match metadata and winner survive expansion without reopening pla
   s.moves = [1, 1]; s.ply = 2;
   const won = E.applyMove(s, 14).state;
   assert.equal(won.winner, 1);
-  const expanded = E.expandState(won);
+  const expanded = E.expandState(won, 10);
   assert.equal(expanded.winner, 1); assert.equal(expanded.turn, won.turn);
   assert.equal(expanded.ply, won.ply); assert.deepEqual(expanded.moves, won.moves);
   assert.equal(expanded.lastMove, index10(won.lastMove));
@@ -95,7 +93,7 @@ test('finished-match metadata and winner survive expansion without reopening pla
 test('invalid, shrinking and off-center expansion requests are rejected without mutation', () => {
   const s = oldMatch(), before = clone(s);
   for (const size of [2, 4, 5, 7, 9, 11, 12, 10.5, NaN, null, '10']) assert.throws(() => E.expandState(s, size));
-  for (const input of [null, {}, { ...s, cells: [] }, { ...s, cells: s.cells.map((c, i) => i ? c : { owner: 1, count: 4 }) }]) assert.throws(() => E.expandState(input));
+  for (const input of [null, {}, { ...s, cells: [] }, { ...s, cells: s.cells.map((c, i) => i ? c : { owner: 1, count: 4 }) }]) assert.throws(() => E.expandState(input, 10));
   assert.deepEqual(s, before);
 });
 
@@ -116,37 +114,33 @@ function restoreApp(saved) {
   }
   const get = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
   const context = vm.createContext({ SplitChess: E,
-    document: { getElementById: get, createElement: () => new Element(), createElementNS: () => new Element(), querySelectorAll: () => [], body: new Element() },
+    document: { getElementById: get, createElement: () => new Element(), createElementNS: () => new Element(), querySelectorAll: () => [], addEventListener() {}, body: new Element() },
     localStorage: { getItem: k => store.get(k) || null, setItem: (k, v) => store.set(k, v) },
-    matchMedia: () => ({ matches: false }), setTimeout() {}, window: { addEventListener() {} }, location: { protocol: 'file:' } });
+    matchMedia: () => ({ matches: false }), performance: { now: () => 0 }, setInterval() {}, setTimeout() {}, window: { addEventListener() {} }, location: { protocol: 'file:' } });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../app.js'), 'utf8'), context);
   return { get, saved: () => JSON.parse(store.get(key)) };
 }
 
-test('actual app migrates 6x6 save and every undo snapshot then persists usable 10x10 history', () => {
+test('actual app preserves legacy 6x6 cells and history, and can still start a different size', () => {
   const initial = E.newGame({ size: 6 });
-  const first = E.applyMove(initial, 14).state;
-  const second = E.applyMove(first, 15).state;
+  const first = E.applyMove(initial, 14).state, second = E.applyMove(first, 15).state;
   const oldSave = { version: 1, state: second, history: [initial, first], mode: 'local', quick: true };
   const before = clone(oldSave), app = restoreApp(oldSave);
-  assert.equal(app.get('board').children.length, 100);
-  assert.deepEqual(app.saved().state, E.expandState(second));
-  assert.deepEqual(app.saved().history, [E.expandState(initial), E.expandState(first)]);
-  assert.equal(app.saved().quick, true); assert.equal(app.saved().mode, 'local');
-  app.get('undo-button').onclick();
-  assert.deepEqual(app.saved().state, E.expandState(first));
-  assert.equal(app.saved().history.length, 1);
-  assert.equal(app.saved().state.lastMove, 44);
-  const resumed = E.applyMove(app.saved().state, 99).state;
-  assert.ok(E.validateState(resumed)); assert.equal(resumed.size, 10); assert.equal(resumed.ply, 2);
-  app.get('undo-button').onclick();
-  assert.deepEqual(app.saved().state, E.expandState(initial));
-  assert.equal(app.saved().history.length, 0);
+  assert.equal(app.get('board').children.length, 36);
+  assert.deepEqual(app.saved().state, second);
+  assert.deepEqual(app.saved().history, [initial, first]);
+  assert.equal(app.saved().version, 2); assert.equal(app.saved().clock.remaining, 240000);
+  app.get('undo-button').onclick(); assert.deepEqual(app.saved().state, first);
   assert.deepEqual(oldSave, before);
+  app.get('board-size').value = '8'; app.get('board-size').onchange();
+  assert.equal(app.get('board-size').value, '6');
+  app.get('confirm-ok').onclick();
+  assert.equal(app.saved().state.size, 8); assert.equal(app.get('board').children.length, 64);
+  assert.equal(app.saved().clock.remaining, 360000); assert.deepEqual(app.saved().history, []);
 });
 
 test('10x10 chain keeps four-point threshold, captures, remainder and trace consistency', () => {
-  const s = E.newGame(); s.moves = [1, 1]; s.ply = 2;
+  const s = E.newGame({ size: 10 }); s.moves = [1, 1]; s.ply = 2;
   for (const [i, owner] of [[44, 1], [34, 1], [45, 2], [35, 2]]) s.cells[i] = { owner, count: 3 };
   s.cells[99] = { owner: 2, count: 1 };
   const r = E.applyMove(s, 44, { trace: true });
@@ -160,16 +154,16 @@ test('10x10 chain keeps four-point threshold, captures, remainder and trace cons
 });
 
 test('10x10 AI stays legal, immutable and responsive on opening, midgame and dense states', t => {
-  const random = randomGenerator(0x10e7a2c), positions = [E.newGame()];
-  let s = E.newGame();
+  const random = randomGenerator(0x10e7a2c), positions = [E.newGame({ size: 10 })];
+  let s = E.newGame({ size: 10 });
   for (let i = 0; i < 180; i++) {
-    if (s.winner) s = E.newGame();
+    if (s.winner) s = E.newGame({ size: 10 });
     const legal = E.legalMoves(s);
     s = E.applyMove(s, legal[Math.floor(random() * legal.length)]).state;
     if (i % 9 === 0 && !s.winner) positions.push(s);
   }
   for (let k = 0; k < 8; k++) {
-    const dense = E.newGame(); dense.moves = [1, 1]; dense.ply = 2;
+    const dense = E.newGame({ size: 10 }); dense.moves = [1, 1]; dense.ply = 2;
     dense.cells.forEach(c => { c.count = k % 2 ? 3 : 1 + Math.floor(random() * 3); c.owner = 1 + Math.floor(random() * 2); });
     positions.push(dense);
   }
