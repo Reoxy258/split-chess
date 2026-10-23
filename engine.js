@@ -1,8 +1,9 @@
 /* Deterministic rules shared by browser, worker, and tests. */
 (function (root) {
   'use strict';
+  const BOARD_SIZE = 10;
   const copy = s => ({ ...s, cells: s.cells.map(c => ({ ...c })), moves: [...s.moves] });
-  function newGame({ size = 6 } = {}) {
+  function newGame({ size = BOARD_SIZE } = {}) {
     if (!Number.isInteger(size) || size < 2 || size > 10) throw new Error('Invalid board size');
     return { size, cells: Array.from({ length: size * size }, () => ({ owner: 0, count: 0 })), turn: 1, moves: [0, 0], winner: 0, ply: 0, lastMove: -1 };
   }
@@ -13,6 +14,15 @@
       [1, 2].includes(s.turn) && [0, 1, 2].includes(s.winner) && Array.isArray(s.moves) && s.moves.length === 2 &&
       s.moves.every(n => Number.isSafeInteger(n) && n >= 0) && Number.isSafeInteger(s.ply) && s.ply >= 0 &&
       s.moves[0] + s.moves[1] === s.ply && Number.isInteger(s.lastMove) && s.lastMove >= -1 && s.lastMove < s.cells.length;
+  }
+  function expandState(input, size = BOARD_SIZE) {
+    if (!validateState(input) || !Number.isInteger(size) || size > 10 || size < input.size || (size - input.size) % 2) throw new Error('Invalid board expansion');
+    const offset = (size - input.size) / 2;
+    const indexOf = i => (Math.floor(i / input.size) + offset) * size + i % input.size + offset;
+    const result = { ...copy(input), size, cells: newGame({ size }).cells };
+    input.cells.forEach((cell, i) => { result.cells[indexOf(i)] = { ...cell }; });
+    result.lastMove = input.lastMove < 0 ? -1 : indexOf(input.lastMove);
+    return result;
   }
   function neighbors(i, n) {
     const out = [];
@@ -102,7 +112,7 @@
     }
     return best;
   }
-  const api = { newGame, validateState, neighbors, legalMoves, totals, applyMove, chooseMove, copy };
+  const api = { BOARD_SIZE, expandState, newGame, validateState, neighbors, legalMoves, totals, applyMove, chooseMove, copy };
   root.SplitChess = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(globalThis);

@@ -60,7 +60,7 @@ function compare(s, i, trace = false) {
 }
 
 test('new 6x6 game is empty and first placement cannot win', () => {
-  const s = engine.newGame();
+  const s = engine.newGame({ size: 6 });
   assert.equal(s.size, 6); assert.equal(s.cells.length, 36);
   assert.ok(s.cells.every(c => c.owner === 0 && c.count === 0));
   assert.deepEqual(s.moves, [0, 0]); assert.equal(s.turn, 1);
@@ -135,7 +135,7 @@ test('side two captures and wins symmetrically after full cascade', () => {
 });
 
 test('validateState rejects structurally broken stable boards', () => {
-  const s = engine.newGame(); assert.ok(engine.validateState(s));
+  const s = engine.newGame({ size: 6 }); assert.ok(engine.validateState(s));
   for (const edit of [x => x.cells.pop(), x => x.cells[0] = { owner: 1, count: 0 },
     x => x.cells[0] = { owner: 0, count: 1 }, x => x.cells[0] = { owner: 1, count: 4 },
     x => x.turn = 3, x => x.moves = [1, 0], x => x.lastMove = 36]) {
@@ -145,9 +145,9 @@ test('validateState rejects structurally broken stable boards', () => {
 
 test('4000 seeded reachable random moves agree with independent serial oracle', () => {
   const random = rng(0x51c7cafe);
-  let s = engine.newGame(), verified = 0, games = 1;
+  let s = engine.newGame({ size: 6 }), verified = 0, games = 1;
   while (verified < 4000) {
-    if (s.winner) { s = engine.newGame(); games++; }
+    if (s.winner) { s = engine.newGame({ size: 6 }); games++; }
     const legal = engine.legalMoves(s);
     assert.ok(legal.length > 0);
     s = compare(s, legal[Math.floor(random() * legal.length)], verified % 97 === 0).state;
@@ -173,9 +173,9 @@ test('120 dense boards of size 2..10 stabilize and agree with independent oracle
 
 test('AI returns legal moves without mutation across 80 evolving positions', () => {
   const random = rng(0x445511);
-  let s = engine.newGame();
+  let s = engine.newGame({ size: 6 });
   for (let k = 0; k < 80; k++) {
-    if (s.winner) s = engine.newGame();
+    if (s.winner) s = engine.newGame({ size: 6 });
     const before = JSON.stringify(s), move = engine.chooseMove(s);
     assert.ok(engine.legalMoves(s).includes(move)); assert.equal(JSON.stringify(s), before);
     s = compare(s, move).state;

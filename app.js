@@ -2,6 +2,7 @@
 (() => {
   'use strict';
   const E = SplitChess, $ = id => document.getElementById(id);
+  const SIZE = E.BOARD_SIZE, CENTER = Math.floor(SIZE / 2) - 1, TRAINING_CELL = CENTER * SIZE + CENTER;
   const KEY = 'split-chess.save.v1', SEEN = 'split-chess.learned.v1';
   const read = key => { try { return localStorage.getItem(key); } catch { return null; } };
   const write = (key, value) => { try { localStorage.setItem(key, value); return true; } catch { return false; } };
@@ -12,9 +13,9 @@
   let restored = false;
   try {
     const saved = JSON.parse(read(KEY));
-    if (saved && saved.version === 1 && saved.state.size === 6 && E.validateState(saved.state) && ['ai', 'local'].includes(saved.mode)) {
-      state = saved.state; mode = saved.mode; quick = typeof saved.quick === 'boolean' ? saved.quick : quick;
-      history = Array.isArray(saved.history) ? saved.history.filter(s => E.validateState(s) && s.size === 6).slice(-60) : [];
+    if (saved && saved.version === 1 && [6, SIZE].includes(saved.state.size) && E.validateState(saved.state) && ['ai', 'local'].includes(saved.mode)) {
+      state = E.expandState(saved.state); mode = saved.mode; quick = typeof saved.quick === 'boolean' ? saved.quick : quick;
+      history = Array.isArray(saved.history) ? saved.history.filter(s => E.validateState(s) && [6, SIZE].includes(s.size)).map(s => E.expandState(s)).slice(-60) : [];
       restored = true;
     }
   } catch { /* Unavailable or damaged storage starts a fresh match. */ }
@@ -28,20 +29,34 @@
     worker?.terminate(); worker = null; thinking = false; busy = false;
     $('flights').replaceChildren();
   }
-  for (let i = 0; i < 36; i++) {
+  for (let i = 0; i < SIZE * SIZE; i++) {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'cell'; b.dataset.index = i;
     b.addEventListener('click', () => onCell(i));
     // Arrow keys complement native button Enter/Space activation.
     b.addEventListener('keydown', event => {
-      const offsets = { ArrowUp: -6, ArrowDown: 6, ArrowLeft: -1, ArrowRight: 1 };
+      const offsets = { ArrowUp: -SIZE, ArrowDown: SIZE, ArrowLeft: -1, ArrowRight: 1 };
       if (!(event.key in offsets)) return;
       event.preventDefault();
       let next = i + offsets[event.key];
-      if (next >= 0 && next < 36 && (Math.abs(offsets[event.key]) === 6 || Math.floor(next / 6) === Math.floor(i / 6))) buttons[next].focus();
+      if (next >= 0 && next < SIZE * SIZE && (Math.abs(offsets[event.key]) === SIZE || Math.floor(next / SIZE) === Math.floor(i / SIZE))) buttons[next].focus();
     });
     buttons.push(b); $('board').append(b);
   }
+  function updatePanHint() {
+    const wrap = $('board-wrap');
+    $('board-pan-note').hidden = wrap.scrollWidth <= wrap.clientWidth + 1;
+  }
+  function revealCell(index, center = false) {
+    const wrap = $('board-wrap');
+    if (wrap.scrollWidth <= wrap.clientWidth) return;
+    const width = wrap.scrollWidth / SIZE, left = (index % SIZE) * width;
+    if (center || left < wrap.scrollLeft || left + width > wrap.scrollLeft + wrap.clientWidth) {
+      wrap.scrollTo({ left: Math.max(0, Math.min(wrap.scrollWidth - wrap.clientWidth, left - (wrap.clientWidth - width) / 2)), behavior: 'smooth' });
+    }
+  }
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(updatePanHint).observe($('board-wrap'));
+  updatePanHint();
   function pips(count) {
     if (!count) return '';
     return '<span class="pips n' + Math.min(count, 4) + '" aria-hidden="true">' + '<i class="pip"></i>'.repeat(Math.min(count, 4)) + '</span>';
@@ -55,11 +70,11 @@
       b.className = 'cell owner-' + c.owner + (c.count === 3 ? ' critical' : '') +
         (i === state.lastMove && tutorial < 0 ? ' last' : '') +
         (locked || enemy ? ' blocked' : '') +
-        (tutorial >= 0 && !tutorialDone && i === 14 ? ' target' : '') +
+        (tutorial >= 0 && !tutorialDone && i === TRAINING_CELL ? ' target' : '') +
         (fx.active?.includes(i) ? ' burst' : '') + (fx.captures?.includes(i) ? ' captured' : '');
       b.innerHTML = pips(c.count);
       b.disabled = !!locked;
-      b.setAttribute('aria-label', '第' + (Math.floor(i / 6) + 1) + '行第' + (i % 6 + 1) + '列，' + (c.owner ? (c.owner === 1 ? '蓝方圆子' : '橙方圆子') + c.count + '点' : '空格'));
+      b.setAttribute('aria-label', '第' + (Math.floor(i / SIZE) + 1) + '行第' + (i % SIZE + 1) + '列，' + (c.owner ? (c.owner === 1 ? '蓝方圆子' : '橙方圆子') + c.count + '点' : '空格'));
     });
     const sums = E.totals({ cells });
     [1, 2].forEach(p => {
@@ -102,8 +117,8 @@
     svg.replaceChildren(); svg.classList.toggle('orange-flight', player === 2);
     if (quick || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     for (const transfer of frame.transfers || []) {
-      const fromX = (transfer.from % 6) * 100 + 50, fromY = Math.floor(transfer.from / 6) * 100 + 50;
-      const toX = (transfer.to % 6) * 100 + 50, toY = Math.floor(transfer.to / 6) * 100 + 50;
+      const fromX = (transfer.from % SIZE) * 100 + 50, fromY = Math.floor(transfer.from / SIZE) * 100 + 50;
+      const toX = (transfer.to % SIZE) * 100 + 50, toY = Math.floor(transfer.to / SIZE) * 100 + 50;
       const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       dot.setAttribute('r', '6'); dot.setAttribute('cx', String(fromX)); dot.setAttribute('cy', String(fromY)); dot.setAttribute('class', 'flying-dot');
       svg.append(dot);
@@ -115,6 +130,7 @@
     let result;
     try { result = E.applyMove(state, index, { trace: true }); } catch { return; }
     const previous = E.copy(state);
+    revealCell(index);
     busy = true; thinking = false; paint();
     const duration = quick ? 65 : 300;
     for (let n = 0; n < result.frames.length; n++) {
@@ -150,7 +166,7 @@
   }
   function onCell(i) {
     if (busy || thinking || state.winner || (tutorial >= 0 && tutorialDone)) return;
-    if (tutorial >= 0 && i !== 14) { status('点蓝色描边的格子，试试这一课的动作'); return; }
+    if (tutorial >= 0 && i !== TRAINING_CELL) { status('点蓝色描边的格子，试试这一课的动作'); return; }
     if (mode === 'ai' && state.turn === 2 && tutorial < 0) return;
     if (state.cells[i].owner && state.cells[i].owner !== state.turn) {
       buttons[i].classList.add('wrong');
@@ -178,7 +194,7 @@
       const fallback = () => { if (!settled && id === epoch) finish(E.chooseMove(state)); };
       try {
         if (location.protocol === 'file:' || typeof Worker === 'undefined') { fallback(); return; }
-        worker = new Worker('ai-worker.js');
+        worker = new Worker('ai-worker.js?v=1.0.2');
         worker.onmessage = event => event.data.error ? fallback() : finish(event.data.index);
         worker.onerror = event => { event.preventDefault(); fallback(); };
         worker.postMessage(state);
@@ -195,16 +211,16 @@
   function loadLesson(n) {
     cancelAsync(); tutorial = n; tutorialDone = false;
     state = E.newGame();
-    if (n >= 1) state.cells[14] = { owner: 1, count: 3 };
-    if (n === 2) state.cells[15] = { owner: 2, count: 2 };
-    if (n === 3) { state.cells[15] = { owner: 2, count: 3 }; state.cells[21] = { owner: 2, count: 3 }; }
+    if (n >= 1) state.cells[TRAINING_CELL] = { owner: 1, count: 3 };
+    if (n === 2) state.cells[TRAINING_CELL + 1] = { owner: 2, count: 2 };
+    if (n === 3) { state.cells[TRAINING_CELL + 1] = { owner: 2, count: 3 }; state.cells[TRAINING_CELL + SIZE + 1] = { owner: 2, count: 3 }; }
     $('coach-kicker').textContent = lessons[n][0];
     $('coach-title').textContent = lessons[n][1];
     $('coach-copy').textContent = lessons[n][2];
     $('coach-action').textContent = '请先点棋盘中的蓝框格';
     $('coach-action').disabled = true;
     $('save-note').textContent = '教程不会覆盖你的棋局';
-    paint(); status('跟着蓝框试一下 · ' + lessons[n][1]);
+    paint(); revealCell(TRAINING_CELL, true); status('跟着蓝框试一下 · ' + lessons[n][1]);
   }
   function startTutorial() {
     if (tutorial >= 0) return;
@@ -267,6 +283,7 @@
   $('welcome-dialog').addEventListener('cancel', () => { write(SEEN, '1'); scheduleAI(); });
   window.addEventListener('pagehide', persist);
   paint(); resetCoach(); normalStatus();
+  if (restored) persist();
   if (restored && !state.winner) status('已恢复上次棋局 · ' + (mode === 'ai' ? '轮到' + (state.turn === 1 ? '你' : '电脑') : (state.turn === 1 ? '蓝方' : '橙方') + '落子'));
   if (!read(SEEN) && !restored) $('welcome-dialog').showModal();
   else scheduleAI();
