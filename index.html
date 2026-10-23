@@ -7,9 +7,9 @@
   <meta name="description" content="一颗落子，一场连锁。满四分裂、吞噬夺棋，随时来一局的休闲棋类小游戏。支持人机与同机双人。">
   <title>分裂棋 · 一颗落子，一场连锁</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%232d69e8'/%3E%3Cg fill='white'%3E%3Ccircle cx='22' cy='22' r='7'/%3E%3Ccircle cx='42' cy='22' r='7'/%3E%3Ccircle cx='22' cy='42' r='7'/%3E%3Ccircle cx='42' cy='42' r='7'/%3E%3C/g%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=1.0.1">
   <script src="engine.js" defer></script>
-  <script src="app.js" defer></script>
+  <script src="app.js?v=1.0.1" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -25,7 +25,7 @@
           <div class="players">
             <div id="player-1" class="player blue"><span class="player-symbol" aria-hidden="true">●</span><div><strong id="name-1">你 · 蓝方</strong><small><b id="tiles-1">0</b> 格 <span>·</span> <b id="points-1">0</b> 点</small></div><span class="turn-indicator">落子中</span></div>
             <span class="versus" aria-hidden="true">VS</span>
-            <div id="player-2" class="player orange"><span class="player-symbol" aria-hidden="true">◆</span><div><strong id="name-2">电脑 · 橙方</strong><small><b id="tiles-2">0</b> 格 <span>·</span> <b id="points-2">0</b> 点</small></div><span class="turn-indicator">落子中</span></div>
+            <div id="player-2" class="player orange"><span class="player-symbol" aria-hidden="true">●</span><div><strong id="name-2">电脑 · 橙方</strong><small><b id="tiles-2">0</b> 格 <span>·</span> <b id="points-2">0</b> 点</small></div><span class="turn-indicator">落子中</span></div>
           </div>
           <div id="board-wrap" class="board-wrap"><div id="board" class="board" role="group" aria-label="六行六列棋盘"></div><svg id="flights" class="flights" viewBox="0 0 600 600" aria-hidden="true"></svg></div>
           <div class="status-line"><span id="status-dot" class="status-dot"></span><p id="status" role="status" aria-live="polite">点一个空格，放下你的第一颗棋子</p></div>
@@ -51,7 +51,7 @@
         </aside>
       </div>
     </main>
-    <footer class="site-footer"><span>小小棋盘，大大连锁。</span><span>分裂棋 <span class="version">v1.0.0</span></span></footer>
+    <footer class="site-footer"><span>小小棋盘，大大连锁。</span><span>分裂棋 <span class="version">v1.0.1</span></span></footer>
   </div>
   <dialog id="rules-dialog" aria-labelledby="rules-title"><div class="dialog-top"><span class="eyebrow">HOW TO PLAY</span><button data-close class="close" aria-label="关闭玩法说明">×</button></div><h2 id="rules-title">四点，改变局面。</h2><ol class="rules-list"><li><b>轮流加一点</b><p>只能点空格或己方格子；不能直接在敌格落子。</p></li><li><b>满四就分裂</b><p>每次消耗四点，向上下左右各送出一点。稳定棋格为一至三点，多收到的点会保留。</p></li><li><b>吞噬并连锁</b><p>扩散碰到敌格，整格变成你的颜色，原有点数保留再相加。满四继续分裂。</p></li><li><b>消灭对手获胜</b><p>双方都落过子后，在完整连锁结束时，清空对方全部棋子即获胜。边角统一满四；飞出棋盘的点消失。</p></li></ol><button id="replay-tutorial" class="primary">动手试试 · 互动教程 →</button></dialog>
   <dialog id="confirm-dialog" aria-labelledby="confirm-title"><span class="eyebrow">A FRESH START</span><h2 id="confirm-title">重新开始这一局？</h2><p id="confirm-copy">当前进度会被新棋局替换。</p><div class="dialog-actions"><button id="confirm-cancel" class="outline">继续当前棋局</button><button id="confirm-ok" class="primary">开始新棋局</button></div></dialog>

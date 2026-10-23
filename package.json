@@ -1,5 +1,5 @@
 {
-  "name": "split-chess", "version": "1.0.0", "private": true,
+  "name": "split-chess", "version": "1.0.1", "private": true,
   "description": "分裂棋 — 满四分裂，连锁夺棋的手机休闲棋类游戏",
   "scripts": { "start": "node scripts/serve.js", "test": "node --test tests/*.test.js", "build:offline": "node scripts/offline.js" },
   "engines": { "node": ">=20" }

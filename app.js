@@ -59,7 +59,7 @@
         (fx.active?.includes(i) ? ' burst' : '') + (fx.captures?.includes(i) ? ' captured' : '');
       b.innerHTML = pips(c.count);
       b.disabled = !!locked;
-      b.setAttribute('aria-label', '第' + (Math.floor(i / 6) + 1) + '行第' + (i % 6 + 1) + '列，' + (c.owner ? (c.owner === 1 ? '蓝方圆子' : '橙方菱子') + c.count + '点' : '空格'));
+      b.setAttribute('aria-label', '第' + (Math.floor(i / 6) + 1) + '行第' + (i % 6 + 1) + '列，' + (c.owner ? (c.owner === 1 ? '蓝方圆子' : '橙方圆子') + c.count + '点' : '空格'));
     });
     const sums = E.totals({ cells });
     [1, 2].forEach(p => {
