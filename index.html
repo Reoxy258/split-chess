@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f7f8f4">
+  <meta name="description" content="一颗落子，一场连锁。满四分裂、吞噬夺棋，随时来一局的休闲棋类小游戏。支持人机与同机双人。">
+  <title>分裂棋 · 一颗落子，一场连锁</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%232d69e8'/%3E%3Cg fill='white'%3E%3Ccircle cx='22' cy='22' r='7'/%3E%3Ccircle cx='42' cy='22' r='7'/%3E%3Ccircle cx='22' cy='42' r='7'/%3E%3Ccircle cx='42' cy='42' r='7'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+  <script src="engine.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="masthead">
+      <a class="brand" href="./" aria-label="分裂棋首页"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>分裂棋<small>SPLIT CHESS</small></span></a>
+      <button id="help-button" class="quiet">玩法说明 <span aria-hidden="true">↗</span></button>
+    </header>
+    <main>
+      <section class="intro"><div><span class="eyebrow">ONE MOVE. A CHAIN REACTION.</span><h1>一颗落子，<br class="mobile-break">一场连锁<span class="title-dot">。</span></h1><p>蓄满四点，向四方分裂。让下一步，改变整个棋局。</p></div><span class="edition" aria-hidden="true">休闲棋局<br>01 — 04</span></section>
+      <div class="game-layout">
+        <section class="arena" aria-label="棋局">
+          <div class="arena-top"><span id="mode-label" class="mode-label">人机对战</span><span id="move-number">第 1 手</span></div>
+          <div class="players">
+            <div id="player-1" class="player blue"><span class="player-symbol" aria-hidden="true">●</span><div><strong id="name-1">你 · 蓝方</strong><small><b id="tiles-1">0</b> 格 <span>·</span> <b id="points-1">0</b> 点</small></div><span class="turn-indicator">落子中</span></div>
+            <span class="versus" aria-hidden="true">VS</span>
+            <div id="player-2" class="player orange"><span class="player-symbol" aria-hidden="true">◆</span><div><strong id="name-2">电脑 · 橙方</strong><small><b id="tiles-2">0</b> 格 <span>·</span> <b id="points-2">0</b> 点</small></div><span class="turn-indicator">落子中</span></div>
+          </div>
+          <div id="board-wrap" class="board-wrap"><div id="board" class="board" role="group" aria-label="六行六列棋盘"></div><svg id="flights" class="flights" viewBox="0 0 600 600" aria-hidden="true"></svg></div>
+          <div class="status-line"><span id="status-dot" class="status-dot"></span><p id="status" role="status" aria-live="polite">点一个空格，放下你的第一颗棋子</p></div>
+          <div class="board-footer"><span><i class="mini-critical" aria-hidden="true"></i> 三点格，再加一点就分裂</span><span id="save-note">自动保存棋局</span></div>
+        </section>
+        <aside class="sidebar">
+          <section id="coach" class="coach card" aria-label="对局提示">
+            <span id="coach-kicker" class="eyebrow">一看就会 · 01 / 04</span>
+            <h2 id="coach-title">从一颗棋子开始</h2>
+            <p id="coach-copy">点空格放下一点。之后，你可以继续为自己的格子蓄力。</p>
+            <div id="coach-art" class="coach-art" aria-hidden="true"><div class="demo-cell"><i></i></div><span>＋</span><div class="demo-cell dots-2"><i></i><i></i></div><span>→</span><div class="demo-cell dots-3"><i></i><i></i><i></i></div></div>
+            <button id="coach-action" class="primary">开始互动教程 <span aria-hidden="true">→</span></button>
+            <button id="exit-tutorial" class="text-button" hidden>退出教程，回到棋局</button>
+          </section>
+          <section class="control-card card" aria-label="对局设置">
+            <div class="section-label"><h2>来一局</h2><span>6 × 6</span></div>
+            <div class="segmented" aria-label="对战模式"><button id="mode-ai" class="selected" aria-pressed="true">人机对战</button><button id="mode-local" aria-pressed="false">同机双人</button></div>
+            <p id="mode-description" class="muted">你执蓝方先手，电脑执橙方。</p>
+            <button id="restart-button" class="outline">重新开局 <span aria-hidden="true">↻</span></button>
+            <div class="utility"><button id="undo-button">↶ 悔一步</button><button id="motion-button" aria-pressed="false">连锁动画：标准</button></div>
+          </section>
+          <section class="rule-note"><span class="note-index">记住这三件事</span><p><b>空格或己方格</b>，每手加一点。</p><p><b>四点分裂</b>，扩散能夺取敌格。</p><p><b>清空对方棋子</b>，赢下这一局。</p><small>边角也满四分裂，出界的点会消失。</small></section>
+        </aside>
+      </div>
+    </main>
+    <footer class="site-footer"><span>小小棋盘，大大连锁。</span><span>分裂棋 <span class="version">v1.0.0</span></span></footer>
+  </div>
+  <dialog id="rules-dialog" aria-labelledby="rules-title"><div class="dialog-top"><span class="eyebrow">HOW TO PLAY</span><button data-close class="close" aria-label="关闭玩法说明">×</button></div><h2 id="rules-title">四点，改变局面。</h2><ol class="rules-list"><li><b>轮流加一点</b><p>只能点空格或己方格子；不能直接在敌格落子。</p></li><li><b>满四就分裂</b><p>每次消耗四点，向上下左右各送出一点。稳定棋格为一至三点，多收到的点会保留。</p></li><li><b>吞噬并连锁</b><p>扩散碰到敌格，整格变成你的颜色，原有点数保留再相加。满四继续分裂。</p></li><li><b>消灭对手获胜</b><p>双方都落过子后，在完整连锁结束时，清空对方全部棋子即获胜。边角统一满四；飞出棋盘的点消失。</p></li></ol><button id="replay-tutorial" class="primary">动手试试 · 互动教程 →</button></dialog>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title"><span class="eyebrow">A FRESH START</span><h2 id="confirm-title">重新开始这一局？</h2><p id="confirm-copy">当前进度会被新棋局替换。</p><div class="dialog-actions"><button id="confirm-cancel" class="outline">继续当前棋局</button><button id="confirm-ok" class="primary">开始新棋局</button></div></dialog>
+  <dialog id="welcome-dialog" aria-labelledby="welcome-title"><div class="dialog-top"><span class="eyebrow">WELCOME TO SPLIT CHESS</span><button id="welcome-skip" class="close" aria-label="跳过教程介绍">×</button></div><div class="welcome-symbol" aria-hidden="true">✣</div><h2 id="welcome-title">一点蓄力，四点出击。</h2><p>把棋子连成一场漂亮的连锁，<br>让对手的棋子成为你的力量。</p><button id="welcome-learn" class="primary">花一分钟，动手学会 →</button><button id="welcome-play" class="text-button">直接开始对局</button></dialog>
+  <script>if (!('noModule' in HTMLScriptElement.prototype)) document.body.innerHTML = '<p>请使用新版浏览器打开分裂棋。</p>';</script>
+</body>
+</html>
+

@@ -1,0 +1,11 @@
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const html = fs.readFileSync(path.resolve(__dirname, '../../分裂棋.html'), 'utf8');
+if (/<script[^>]+src=|<link[^>]+rel="stylesheet"/i.test(html)) throw new Error('Offline file still depends on external scripts/styles');
+const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+if (scripts.length !== 3) throw new Error('Expected complete engine, UI and compatibility scripts');
+for (const match of scripts) new vm.Script(match[1]);
+if (html.indexOf('const E = SplitChess') < html.indexOf('<div class="shell">')) throw new Error('Inline UI must run after DOM');
+console.log('Offline HTML: all scripts included, valid syntax, DOM-first execution.');
