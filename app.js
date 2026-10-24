@@ -109,9 +109,11 @@
   }
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(updatePanHint).observe($('board-wrap'));
   buildBoard();
+  /* 棋子渲染（v1.2.0 · chess-crash 同款）：圆形棋子 + 白色数字点数；
+     蓝方天蓝 / 橙方琥珀由 .owner- 决定，三点将裂格变赤红并呼吸脉冲（.cell.critical）。 */
   function pips(count) {
     if (!count) return '';
-    return '<span class="pips n' + Math.min(count, 4) + '" aria-hidden="true">' + '<i class="pip"></i>'.repeat(Math.min(count, 4)) + '</span>';
+    return '<span class="stone" aria-hidden="true">' + count + '</span>';
   }
   function paint(cells = state.cells, fx = {}) {
     const locked = busy || thinking || state.winner || (tutorial < 0 && clock.paused) || (tutorial >= 0 && tutorialDone);
