@@ -22,6 +22,10 @@ jobs:
         with:
           node-version: '22'
       - run: npm test
+      - name: Configure the default online server
+        run: node scripts/configure-online.js
+        env:
+          SPLIT_CHESS_SERVER: ${{ vars.SPLIT_CHESS_SERVER }}
       - name: Prepare only the playable assets
         run: |
           mkdir _site
@@ -32,3 +36,4 @@ jobs:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
+

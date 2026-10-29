@@ -15,6 +15,25 @@ function makeConn() {
   return conn;
 }
 const last = conn => conn.sent.length ? JSON.parse(conn.sent[conn.sent.length - 1]) : null;
+
+test('waiting host resumes its own seat and heartbeats keep its invitation alive', () => {
+  let now = 0;
+  const hub = createRoomHub({ now: () => now, roomTtlMs: 1000 });
+  const host = wire(hub, makeConn());
+  send(host, { t: 'create', size: 7 });
+  const room = last(host);
+  now = 900; send(host, { t: 'ping' });
+  now = 1500; hub.sweep();
+  assert.ok(hub.roomView(room.code));
+  hub.detach(host);
+  const back = wire(hub, makeConn());
+  send(back, { t: 'join', code: room.code, token: room.token });
+  assert.equal(last(back).phase, 'waiting');
+  assert.equal(last(back).role, 1);
+  const guest = wire(hub, makeConn());
+  send(guest, { t: 'join', code: room.code });
+  assert.equal(last(guest).phase, 'playing');
+});
 const drain = conn => { const out = conn.sent.map(JSON.parse); conn.sent = []; return out; };
 function wire(hub, conn) { hub.attach(conn); return conn; }
 function send(conn, obj) { conn.onmessage(JSON.stringify(obj)); }
@@ -200,7 +219,7 @@ test('disconnect keeps the room joinable for reconnection; peer is notified', ()
   assert.equal(last(host).t, 'peer');
 });
 
-test('stranger can take a vacant seat by room code while the game is live', () => {
+test('an invitation cannot take a disconnected player seat', () => {
   const hub = createRoomHub({ now: () => 1000 });
   const host = wire(hub, makeConn()), guest = wire(hub, makeConn());
   send(host, { t: 'create', size: 5 });
@@ -211,8 +230,10 @@ test('stranger can take a vacant seat by room code while the game is live', () =
 
   const stranger = wire(hub, makeConn());
   send(stranger, { t: 'join', code, name: '路人' });
-  assert.equal(last(stranger).role, 2);
-  assert.deepEqual(last(stranger).resume.moves, [2]);
+  assert.equal(last(stranger).code, 'full');
+  send(stranger, { t: 'join', code, token: 'wrong-token' });
+  assert.equal(last(stranger).code, 'forbidden');
+  assert.equal(hub.roomView(code).seats[2].connected, false);
 });
 
 test('restart resets the game state and relays to both seats', () => {
@@ -309,3 +330,4 @@ test('ping answers pong with the round-trip marker', () => {
   send(conn, { t: 'ping', n: 7 });
   assert.deepEqual(last(conn), { t: 'pong', n: 7 });
 });
+

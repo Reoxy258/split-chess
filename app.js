@@ -3,10 +3,19 @@
   'use strict';
   const E = SplitChess, $ = id => document.getElementById(id);
   const Net = typeof SplitChessNet !== 'undefined' ? SplitChessNet : null;
+  const invitation = Net?.invitation();
   let SIZE = E.BOARD_SIZE, TRAINING_CELL = 0;
   const KEY = 'split-chess.save.v1', SEEN = 'split-chess.learned.v1';
-  const read = key => { try { return localStorage.getItem(key); } catch { return null; } };
-  const write = (key, value) => { try { localStorage.setItem(key, value); return true; } catch { return false; } };
+  const read = key => {
+    try { if (key === KEY && sessionStorage.getItem(key)) return sessionStorage.getItem(key); } catch { /* unavailable */ }
+    try { return localStorage.getItem(key); } catch { return null; }
+  };
+  const write = (key, value) => {
+    // Each tab keeps its own seat even when another tab shares localStorage.
+    let saved = false;
+    try { if (key === KEY) { sessionStorage.setItem(key, value); saved = true; } } catch { /* unavailable */ }
+    try { localStorage.setItem(key, value); return true; } catch { return saved; }
+  };
   let state = E.newGame(), mode = 'ai', history = [], busy = false, thinking = false, epoch = 0, worker = null;
   let quick = matchMedia('(prefers-reduced-motion: reduce)').matches, tutorial = -1, tutorialDone = false, beforeTutorial = null, pending = null;
   // 在线对战：session 传输会话；online 房间信息；inbound 远端事件队列；guestClockAt 计时快照时刻。
@@ -201,6 +210,7 @@
     $('restart-button').hidden = mode === 'online';
     $('resign-button').hidden = !(mode === 'online' && session && online && !online.peerGone && !state.winner);
     $('leave-room-button').hidden = mode !== 'online';
+    $('invite-button').hidden = mode !== 'online' || !online;
     document.body.classList.toggle('tutorial', tutorial >= 0);
     document.body.classList.toggle('result', !!state.winner && tutorial < 0);
     renderClock();
@@ -211,7 +221,7 @@
     else if (clock.paused && tutorial < 0) status('棋局已暂停 · 点击继续对局恢复计时');
     else if (mode === 'online' && tutorial < 0) {
       if (!session?.isOpen()) status('连接中断 · 正在自动重连');
-      else if (online?.peerGone) status('对方掉线了 · 等待重连或离开房间');
+      else if (online?.peerGone) status(online.peerName ? '对方掉线了 · 等待重连或离开房间' : '等待好友加入 · 点击「邀请好友」发送链接');
       else if (state.ply === 0 && online?.role === 1) status('房间已就绪 · 点一个空格，放下你的第一颗棋子');
       else if (state.turn === online?.role) status('轮到你了 · 点空格或己方格，增加一点');
       else status('等待对方落子…');
@@ -399,6 +409,7 @@
     el.textContent = text;
   }
   function showRoomWaiting() {
+    $('room-actions').hidden = true;
     const el = $('room-status');
     el.hidden = false;
     el.className = 'room-status';
@@ -408,6 +419,11 @@
     const code = document.createElement('b');
     code.className = 'code';
     code.textContent = online.code;
+    const link = Net.inviteUrl(online.code, session?.url || online.server);
+    $('room-invite').hidden = !link;
+    $('room-invite-link').value = link || '';
+    $('room-copy-note').textContent = '';
+    $('room-copy-link').onclick = () => copyText(link, '邀请链接');
     const actions = document.createElement('span');
     const copy = document.createElement('button');
     copy.className = 'outline';
@@ -415,27 +431,35 @@
     copy.onclick = () => copyText(online.code);
     actions.append(copy);
     const hint = document.createElement('span');
-    hint.textContent = '等待对手加入… 好友在「在线对战」里输入此码即可开局。';
+    hint.textContent = '等待好友加入… 发送下方邀请链接，好友点开即可加入。';
     el.append(label, code, actions, hint);
   }
-  function copyText(text) {
+  function copyText(text, label = '房间码') {
+    const note = $('room-copy-note');
     try {
       if (navigator.clipboard?.writeText) {
-        navigator.clipboard.writeText(text).then(() => status('房间码已复制'), () => status('复制失败 · 房间码 ' + text));
+        navigator.clipboard.writeText(text).then(() => { note.textContent = label + '已复制，发给好友即可'; }, () => { note.textContent = '复制失败，请长按或选中下方链接手动复制；房间码：' + online.code; });
         return;
       }
     } catch { /* 剪贴板不可用：提示手动记录 */ }
-    status('请手动记录房间码：' + text);
+    note.textContent = '请选中邀请链接手动复制，或发送房间码：' + online.code;
   }
   function openRoomDialog() {
     if (!Net) { status('此构建不支持在线对战'); return; }
     $('net-name').value = Net.rememberedName();
-    $('net-server').value = Net.rememberedServer() || '';
+    $('net-server').value = invitation?.server || Net.rememberedServer() || '';
+    $('net-advanced').open = false;
+    $('room-invite').hidden = true;
+    $('room-actions').hidden = false;
     $('room-code').value = '';
     $('room-status').hidden = true;
     $('room-create').disabled = false;
     $('room-join').disabled = false;
     $('room-dialog').showModal();
+    if (session && online) {
+      $('room-create').disabled = true; $('room-join').disabled = true;
+      showRoomWaiting();
+    }
   }
   function startOnlineSession(url, intent) {
     teardownOnline();
@@ -526,14 +550,18 @@
       case 'state': {
         netState = data;
         if (data === 'reconnecting') status('连接断开 · 正在自动重连…');
+        if ($('room-dialog').open && !online && session?.active) {
+          roomDialogNote('正在连接房间服务… 首次启动可能需要约一分钟，请稍候。');
+        }
         paint(); normalStatus();
         return;
       }
       case 'room': {
         const names = Array.isArray(data.names) ? data.names : [];
         const peerName = names[3 - data.role - 1] || '';
-        online = { role: data.role, code: data.code, token: data.token, server: session?.url || null, peerName, peerGone: !peerName };
+        online = { role: data.role, code: data.code, token: data.token, server: session?.url || null, peerName, peerGone: Array.isArray(data.connected) ? !data.connected[2 - data.role] : !peerName };
         myName = names[data.role - 1] || myName;
+        Net.rememberSeat(data.code, session.url, data.token);
         mode = 'online';
         if (data.resume) reconcile(data.resume);
         else {
@@ -545,7 +573,7 @@
         }
         if (data.phase === 'waiting' && data.role === 1) showRoomWaiting();
         else closeRoomDialog();
-        status(data.phase === 'waiting' ? '房间已创建 · 把房间码发给好友，等 TA 加入' : '已连接房间 ' + data.code + ' · ' + (online.role === 1 ? '你执蓝方先行' : '对方执蓝方，你执橙方'));
+        status(data.phase === 'waiting' ? '房间已创建 · 复制邀请链接发给好友，等 TA 加入' : '已连接房间 ' + data.code + ' · ' + (online.role === 1 ? '你执蓝方先行' : '对方执蓝方，你执橙方'));
         persist();
         return;
       }
@@ -618,7 +646,8 @@
         return;
       }
       case 'error': {
-        const text = { notfound: '房间不存在，请核对 5 位房间码', full: '房间已满（已有两位玩家）', ended: '这局棋已结束', busy: '对局进行中', badsize: '服务器拒绝了棋盘尺寸', limit: '服务器房间数已达上限', forbidden: '会话已失效，请重新创建或加入房间', badmsg: '消息被服务器拒绝' }[data.code] || '连接出现错误';
+        $('room-actions').hidden = false;
+        const text = { unavailable: '连接超时，请检查网络后重试，或联系房主确认联机服务已启动', notfound: '房间不存在或已过期，请让好友重新创建并发送邀请', full: '房间已满，或座位正在等待原玩家重连', ended: '这局棋已结束', busy: '对局进行中', badsize: '服务器拒绝了棋盘尺寸', limit: '服务器房间数已达上限', forbidden: '会话已失效，请重新创建或加入房间', badmsg: '消息被服务器拒绝' }[data.code] || '连接出现错误';
         $('room-create').disabled = false;
         $('room-join').disabled = false;
         if ($('room-dialog').open) roomDialogNote(text, { error: true });
@@ -645,7 +674,7 @@
   $('exit-tutorial').onclick = exitTutorial;
   $('mode-ai').onclick = () => { if (mode !== 'ai') askNew('ai'); };
   $('mode-local').onclick = () => { if (mode !== 'local') askNew('local'); };
-  $('mode-online').onclick = () => { if (mode === 'online') { if (!session) openRoomDialog(); return; } askNew('online'); };
+  $('mode-online').onclick = () => { if (mode === 'online') { openRoomDialog(); return; } askNew('online'); };
   $('restart-button').onclick = () => { if (mode === 'online') return; askNew(mode); };
   $('resign-button').onclick = () => {
     if (mode !== 'online' || state.winner || !session?.isOpen() || !online || online.peerGone) return;
@@ -663,14 +692,17 @@
       $('confirm-dialog').showModal();
     } else leaveToMenu();
   };
+  $('invite-button').onclick = openRoomDialog;
+  $('room-dialog').addEventListener('close', () => { if (!online) { session?.giveUp(); session = null; } });
+  $('room-code').addEventListener('keydown', event => { if (event.key === 'Enter') $('room-join').click(); });
   $('room-create').onclick = () => {
     if (!Net) return;
     myName = Net.clampName($('net-name').value);
     Net.rememberName(myName);
     const url = Net.normalizeUrl($('net-server').value) || Net.defaultServerUrl();
-    if (!url) { roomDialogNote('此页面没有内置对战服务：请填写自建服务器地址（部署说明见 README），或用服务器地址打开本页。', { error: true }); return; }
+    if (!url) { roomDialogNote('联机服务尚未配置。请使用房主发来的邀请链接，或联系网站维护者启用联机服务。', { error: true }); return; }
     Net.rememberServer($('net-server').value.trim());
-    roomDialogNote('正在连接 ' + url + ' …');
+    roomDialogNote('正在创建房间… 首次连接可能需要约一分钟。');
     $('room-create').disabled = true; $('room-join').disabled = true;
     startOnlineSession(url, s => s.create({ size: SIZE, name: myName }));
   };
@@ -681,11 +713,12 @@
     myName = Net.clampName($('net-name').value);
     Net.rememberName(myName);
     const url = Net.normalizeUrl($('net-server').value) || Net.defaultServerUrl();
-    if (!url) { roomDialogNote('此页面没有内置对战服务：请填写自建服务器地址。', { error: true }); return; }
+    if (!url) { roomDialogNote('联机服务尚未配置。请使用好友发来的完整邀请链接。', { error: true }); return; }
     Net.rememberServer($('net-server').value.trim());
     roomDialogNote('正在加入房间 ' + code + ' …');
     $('room-create').disabled = true; $('room-join').disabled = true;
-    startOnlineSession(url, s => s.join({ code, name: myName, token: online?.code === code ? online.token : null }));
+    const token = Net.seatToken(code, url) || (!invitation && online?.code === code && online.server === url ? online.token : null);
+    startOnlineSession(url, s => s.join({ code, name: myName, token }));
   };
   $('confirm-cancel').onclick = () => { pending = null; $('confirm-dialog').close(); };
   $('confirm-ok').onclick = () => { const action = pending; pending = null; $('confirm-dialog').close(); action?.(); };
@@ -724,10 +757,16 @@
   paint(); resetCoach(); normalStatus();
   if (restored) persist();
   if (restored && !state.winner && !clock.paused) status('已恢复上次棋局 · ' + (mode === 'ai' ? '轮到' + (state.turn === 1 ? '你' : '电脑') : (state.turn === 1 ? '蓝方' : '橙方') + '落子'));
-  if (!read(SEEN) && !restored) $('welcome-dialog').showModal();
+  if (!invitation && !read(SEEN) && !restored) $('welcome-dialog').showModal();
   else scheduleAI();
   // 存档里带在线房间：静默重连（token 恢复原座，服务器下发棋谱重放）。
-  if (Net && restored && mode === 'online' && online && !state.winner) {
+  if (invitation) {
+    cancelAsync();
+    openRoomDialog();
+    $('room-code').value = invitation.code;
+    $('room-join').disabled = false;
+    $('room-join').click();
+  } else if (Net && restored && mode === 'online' && online && !state.winner) {
     const url = Net.normalizeUrl(online.server) || Net.defaultServerUrl();
     if (url) {
       status('正在重新连接房间 ' + online.code + ' …');
@@ -736,3 +775,4 @@
     } else status('在线对战需要服务器地址 · 点「在线对战」重新加入');
   }
 })();
+
