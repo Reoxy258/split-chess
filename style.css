@@ -27,3 +27,26 @@
 .clock-bar{display:flex;align-items:center;gap:24px;padding:12px 14px;background:#f5f7f2;border:1px solid #e4eade;border-radius:12px}.clock-bar>div{display:flex;flex-direction:column;gap:5px}.clock-bar span{font-size:10px;color:#819087}.clock-bar strong{font-size:23px;font-variant-numeric:tabular-nums;font-weight:650;color:#344c3c;line-height:1.15}.clock-bar .turn-clock strong{font-size:18px}.clock-button{margin-left:auto;min-height:44px;min-width:76px;border:1px solid #d9e3d5;border-radius:9px;background:white;color:#48614e;font-size:12px;padding:9px 12px}.clock-note{font-size:10px;color:#819087;line-height:1.6;margin:8px 0 14px;min-height:16px}.clock-bar.urgent .turn-clock strong{color:#c2532f}.clock-bar.urgent{border-color:#efc6b0}.tutorial .clock-bar{opacity:.55}@media(max-width:400px){.clock-bar{gap:13px;padding:10px}.clock-bar strong{font-size:21px}.clock-button{font-size:11px;padding:8px;min-width:68px}}
 
 .board-options{margin:0 0 12px}.board-options .size-picker{margin:0;justify-content:flex-start}.board-options .size-picker select{flex:1;max-width:200px;margin-left:auto}.board-options #time-plan{margin:6px 0 0;font-size:10px}
+
+/* 在线对战（v1.3.0）：连接状态行、房间面板、认输/离开。 */
+.net-line{display:flex;align-items:center;gap:7px;font-size:10px;color:#6f7d75;margin:10px 0 0}
+.net-line::before{content:"";width:7px;height:7px;border-radius:50%;background:#59b977;flex-shrink:0}
+.net-line.warn::before{background:#e0a33c;animation:netblink 1.2s ease infinite}
+.net-line.down::before{background:#cf5f47}
+@keyframes netblink{50%{opacity:.35}}
+#room-dialog .room-intro{font-size:12px;color:#7c8883;line-height:1.9;margin:0 0 18px}
+.room-form{display:grid;grid-template-columns:76px 1fr;gap:10px 12px;align-items:center;margin:0 0 4px}
+.room-form label{font-size:11px;color:#5d6e63}
+.room-form input{font:inherit;font-size:13px;color:var(--ink);border:1px solid #dbe4da;border-radius:9px;padding:10px 12px;background:#f9fbf7;min-height:44px;width:100%}
+.room-form input:focus-visible{outline:3px solid #8aacec;outline-offset:2px}
+.room-server-note{margin:4px 0 16px}
+.room-actions{display:grid;gap:10px}
+.room-actions .primary{width:100%}
+.room-join{display:flex;gap:8px}
+.room-join input{font:inherit;font-size:15px;letter-spacing:3px;text-transform:uppercase;text-align:center;color:var(--ink);border:1px solid #dbe4da;border-radius:9px;padding:10px 4px;background:#f9fbf7;min-height:44px;flex:1;min-width:0}
+.room-join input:focus-visible{outline:3px solid #8aacec;outline-offset:2px}
+.room-join button{min-width:104px}
+.room-status{margin-top:18px;padding:14px;border:1px solid #e4eade;border-radius:12px;background:#f5f7f2;font-size:12px;line-height:1.9;color:#5d6e63;display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.room-status .code{font-size:24px;font-weight:800;letter-spacing:6px;color:var(--blue);line-height:1.2}
+.room-status.error{border-color:#efc6b0;background:#fdf3ed;color:#a34a2e}
+.utility #resign-button{color:#c2532f}

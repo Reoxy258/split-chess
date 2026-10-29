@@ -7,9 +7,10 @@
   <meta name="description" content="一颗落子，一场连锁。满四分裂、吞噬夺棋，随时来一局的休闲棋类小游戏。支持人机与同机双人。">
   <title>分裂棋 · 一颗落子，一场连锁</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%232d69e8'/%3E%3Cg fill='white'%3E%3Ccircle cx='22' cy='22' r='7'/%3E%3Ccircle cx='42' cy='22' r='7'/%3E%3Ccircle cx='22' cy='42' r='7'/%3E%3Ccircle cx='42' cy='42' r='7'/%3E%3C/g%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=1.2.0">
-  <script src="engine.js?v=1.2.0" defer></script>
-  <script src="app.js?v=1.2.0" defer></script>
+  <link rel="stylesheet" href="style.css?v=1.3.0">
+  <script src="engine.js?v=1.3.0" defer></script>
+  <script src="net.js?v=1.3.0" defer></script>
+  <script src="app.js?v=1.3.0" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -52,19 +53,36 @@
           </section>
           <section class="control-card card" aria-label="对局设置">
             <div class="section-label"><h2>来一局</h2><span id="size-label">7 × 7</span></div>
-            <div class="segmented" aria-label="对战模式"><button id="mode-ai" class="selected" aria-pressed="true">人机对战</button><button id="mode-local" aria-pressed="false">同机双人</button></div>
+            <div class="segmented" aria-label="对战模式"><button id="mode-ai" class="selected" aria-pressed="true">人机对战</button><button id="mode-local" aria-pressed="false">同机双人</button><button id="mode-online" aria-pressed="false">在线对战</button></div>
             <p id="mode-description" class="muted">你执蓝方先手，电脑执橙方。</p>
+            <p id="net-line" class="net-line" hidden></p>
             <button id="restart-button" class="outline">重新开局 <span aria-hidden="true">↻</span></button>
             <div class="utility"><button id="undo-button">↶ 悔一步</button><button id="motion-button" aria-pressed="false">连锁动画：标准</button></div>
+            <div class="utility"><button id="resign-button" hidden>🏳 认输</button><button id="leave-room-button" hidden>离开房间</button></div>
           </section>
           <section class="rule-note"><span class="note-index">记住这三件事</span><p><b>空格或己方格</b>，每手加一点。</p><p><b>四点分裂</b>，扩散能夺取敌格。</p><p><b>清空敌子或到时点数领先</b>，赢下这一局。</p><small>边角也满四分裂，出界的点会消失。</small></section>
         </aside>
       </div>
     </main>
-    <footer class="site-footer"><span>小小棋盘，大大连锁。</span><span>分裂棋 <span class="version">v1.2.0</span></span></footer>
+    <footer class="site-footer"><span>小小棋盘，大大连锁。</span><span>分裂棋 <span class="version">v1.3.0</span></span></footer>
   </div>
   <dialog id="rules-dialog" aria-labelledby="rules-title"><div class="dialog-top"><span class="eyebrow">HOW TO PLAY</span><button data-close class="close" aria-label="关闭玩法说明">×</button></div><h2 id="rules-title">四点，改变局面。</h2><ol class="rules-list"><li><b>轮流加一点</b><p>只能点空格或己方格子；不能直接在敌格落子。</p></li><li><b>满四就分裂</b><p>每次消耗四点，向上下左右各送出一点。稳定棋格为一至三点，多收到的点会保留。</p></li><li><b>吞噬并连锁</b><p>扩散碰到敌格，整格变成你的颜色，原有点数保留再相加。满四继续分裂。</p></li><li><b>消灭对手获胜</b><p>双方都落过子后，在完整连锁结束时，清空对方全部棋子即获胜。边角统一满四；飞出棋盘的点消失。</p></li><li><b>限时比点数</b><p>5～10阶棋盘分别限时3、4、5、6、8、10分钟；每手15、18、20、22、25、30秒，超时跳过。整局到时比较所有棋子的点数总和（不是占格数），同分加时一分钟，仍同分则继续加时。连锁动画、暂停、教程和后台停表；返回或刷新后点击继续。首次落子或点击开始计时。</p></li></ol><button id="replay-tutorial" class="primary">动手试试 · 互动教程 →</button></dialog>
   <dialog id="confirm-dialog" aria-labelledby="confirm-title"><span class="eyebrow">A FRESH START</span><h2 id="confirm-title">重新开始这一局？</h2><p id="confirm-copy">当前进度会被新棋局替换。</p><div class="dialog-actions"><button id="confirm-cancel" class="outline">保留当前棋局</button><button id="confirm-ok" class="primary">开始新棋局</button></div></dialog>
+  <dialog id="room-dialog" aria-labelledby="room-title">
+    <div class="dialog-top"><span class="eyebrow">ONLINE MATCH</span><button data-close class="close" aria-label="关闭房间面板">×</button></div>
+    <h2 id="room-title">在线对战 · 与好友连线</h2>
+    <p class="room-intro">创建房间得到 5 位房间码，发给好友；对方输入同一码即开局。你执蓝方先行，规则与计时同单机版。</p>
+    <div class="room-form">
+      <label for="net-name">昵称</label><input id="net-name" maxlength="12" placeholder="可留空" autocomplete="off">
+      <label for="net-server">对战服务器</label><input id="net-server" placeholder="留空＝当前页面服务器" autocomplete="off">
+      <p class="muted room-server-note">GitHub Pages 在线版需填自建服务器地址（见 README 部署说明）；自托管版留空即可。</p>
+    </div>
+    <div class="room-actions">
+      <button id="room-create" class="primary">创建房间</button>
+      <div class="room-join"><input id="room-code" maxlength="5" placeholder="房间码" autocomplete="off" autocapitalize="characters"><button id="room-join" class="outline">加入房间</button></div>
+    </div>
+    <div id="room-status" class="room-status" hidden></div>
+  </dialog>
   <dialog id="welcome-dialog" aria-labelledby="welcome-title"><div class="dialog-top"><span class="eyebrow">WELCOME TO SPLIT CHESS</span><button id="welcome-skip" class="close" aria-label="跳过教程介绍">×</button></div><div class="welcome-symbol" aria-hidden="true">✣</div><h2 id="welcome-title">一点蓄力，四点出击。</h2><p>把棋子连成一场漂亮的连锁，<br>让对手的棋子成为你的力量。</p><button id="welcome-learn" class="primary">花一分钟，动手学会 →</button><button id="welcome-play" class="text-button">直接开始对局</button></dialog>
   <script>if (!('noModule' in HTMLScriptElement.prototype)) document.body.innerHTML = '<p>请使用新版浏览器打开分裂棋。</p>';</script>
 </body>

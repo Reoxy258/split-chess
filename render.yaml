@@ -1,0 +1,16 @@
+# Render blueprint: one small Node service that serves the game and relays
+# online rooms on the same port. The free plan sleeps after 15 idle minutes;
+# the first connection then waits ~50s for the cold start.
+services:
+  - type: web
+    name: split-chess
+    runtime: node
+    plan: free
+    buildCommand: npm install --no-audit --no-fund
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: NODE_VERSION
+        value: "22"

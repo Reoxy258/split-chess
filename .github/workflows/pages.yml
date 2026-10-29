@@ -25,7 +25,7 @@ jobs:
       - name: Prepare only the playable assets
         run: |
           mkdir _site
-          cp index.html style.css engine.js app.js ai-worker.js .nojekyll _site/
+          cp index.html style.css engine.js net.js app.js ai-worker.js .nojekyll _site/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
