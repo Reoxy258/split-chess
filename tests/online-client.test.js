@@ -11,7 +11,31 @@ const E = require('../engine.js');
 const { createRoomHub } = require('../scripts/rooms.js');
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
 const netSource = fs.readFileSync(path.join(__dirname, '..', 'net.js'), 'utf8');
+const Net = require('../net.js');
 const SAVE = 'split-chess.save.v1';
+
+test('normalizeUrl completes bare addresses with scheme and /ws path', () => {
+  // Node has no page location: bare hosts resolve over plain ws://.
+  assert.equal(Net.normalizeUrl('split-chess.onrender.com'), 'ws://split-chess.onrender.com/ws');
+  assert.equal(Net.normalizeUrl(' 127.0.0.1:4174 '), 'ws://127.0.0.1:4174/ws');
+  assert.equal(Net.normalizeUrl('ws://127.0.0.1:4174'), 'ws://127.0.0.1:4174/ws');
+  assert.equal(Net.normalizeUrl('ws://127.0.0.1:4174/ws'), 'ws://127.0.0.1:4174/ws'); // path preserved
+  assert.equal(Net.normalizeUrl('https://split-chess.onrender.com'), 'ws://split-chess.onrender.com/ws'); // prefix stripped
+  assert.equal(Net.normalizeUrl(''), null);
+  assert.equal(Net.normalizeUrl(null), null);
+  assert.equal(Net.normalizeUrl('   '), null);
+});
+
+test('normalizeUrl upgrades to wss on https pages', () => {
+  const ctx = { location: { protocol: 'https:' } };
+  vm.createContext(ctx);
+  vm.runInContext(netSource, ctx);
+  const NetHttps = ctx.SplitChessNet;
+  assert.ok(NetHttps, 'net.js attaches to the vm global');
+  assert.equal(NetHttps.normalizeUrl('split-chess.onrender.com'), 'wss://split-chess.onrender.com/ws');
+  assert.equal(NetHttps.normalizeUrl('ws://insecure.example.com'), 'wss://insecure.example.com/ws'); // ws upgraded on https
+  assert.equal(NetHttps.normalizeUrl('wss://secure.example.com/ws'), 'wss://secure.example.com/ws');
+});
 
 const WS_CLASS = `
 globalThis.WebSocket = class {

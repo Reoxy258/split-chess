@@ -10,8 +10,14 @@
     if (raw == null) return null;
     let url = String(raw).trim();
     if (!url) return null;
-    if (!/^wss?:\/\//i.test(url)) url = 'wss://' + url.replace(/^\w+:/, '').replace(/^\/+/, '');
+    if (!/^wss?:\/\//i.test(url)) {
+      // Bare host (optionally "host:port"): pick the scheme that matches the page
+      // so plain-HTTP self-hosted servers keep working from an HTTP page.
+      const scheme = root.location && root.location.protocol === 'https:' ? 'wss://' : 'ws://';
+      url = scheme + url.replace(/^\w+:/, '').replace(/^\/+/, '');
+    }
     if (root.location && root.location.protocol === 'https:' && /^ws:\/\//i.test(url)) url = 'wss://' + url.slice(5);
+    if (/^wss?:\/\/[^\/?#]+\/?$/i.test(url)) url = url.replace(/\/?$/, '/ws'); // the relay always lives at /ws
     return url;
   }
 

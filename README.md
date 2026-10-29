@@ -57,7 +57,7 @@
 
 免费托管（Render 等）：仓库已附 `render.yaml`（free 套餐、`/healthz` 健康检查、`HOST=0.0.0.0`），新建 Web Service 指向本仓库即可，无需环境变量。任何能跑 Node 20+ 的主机（VPS、Railway、Fly.io 等）都可用上述 HOST/PORT 环境变量自托管。免费档位空闲约 15 分钟会休眠，首个连接需等待约 50 秒冷启动。
 
-GitHub Pages 在线版（静态托管）没有内置服务：在房间面板的「对战服务器」一栏填入你的服务器地址（如 `wss://split-chess.onrender.com/ws`）即可；地址会记住，也可用 `?server=` 链接参数指定。自托管页面（从服务器打开）留空即可自动使用同源地址。
+GitHub Pages 在线版（静态托管）没有内置服务：在房间面板的「对战服务器」一栏填入你的服务器地址即可；只填域名（如 `split-chess.onrender.com`）会自动补全协议与 `/ws` 路径，也可填完整地址（如 `wss://split-chess.onrender.com/ws`）。地址会记住，也可用 `?server=` 链接参数指定。自托管页面（从服务器打开）留空即可自动使用同源地址。
 
 ## 本地开发
 
