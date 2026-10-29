@@ -54,7 +54,7 @@ function createRoomHub(options = {}) {
     return { t: 'resume', size: room.size, state: room.snapshotState, moves: [...room.moves], clock: room.clock, phase: room.phase, resigned: room.resigned, restarts: room.restarts, names: [room.seats[1].name, room.seats[2].name] };
   }
   function roomInfo(room, role, token) {
-    const payload = { t: 'room', code: room.code, role, token, size: room.size, phase: room.phase, names: [room.seats[1].name, room.seats[2].name], restarts: room.restarts };
+    const payload = { t: 'room', code: room.code, role, token, size: room.size, phase: room.phase, names: [room.seats[1].name, room.seats[2].name], connected: [!!room.seats[1].conn, !!room.seats[2].conn], restarts: room.restarts };
     if (room.phase !== 'waiting') payload.resume = snapshot(room);
     return payload;
   }
@@ -79,7 +79,7 @@ function createRoomHub(options = {}) {
     room.seats[seat].conn = null;
     touch(room);
     notifyPeer(room, seat, { t: 'peer-left', role: seat, reason: reason === 'left' ? 'left' : 'drop' });
-    if (reason === 'left' && room.phase === 'playing') room.phase = 'ended';
+    if (reason === 'left') { room.phase = 'ended'; room.seats[seat].token = null; }
   }
 
   function receive(conn, text) {
@@ -90,7 +90,7 @@ function createRoomHub(options = {}) {
     const entry = conns.get(conn);
     if (msg.t === 'create') return handleCreate(conn, msg);
     if (msg.t === 'join') return handleJoin(conn, msg);
-    if (msg.t === 'ping') return send(conn, { t: 'pong', n: msg.n ?? 0 });
+    if (msg.t === 'ping') { if (entry) touch(entry.room); return send(conn, { t: 'pong', n: msg.n ?? 0 }); }
     if (!entry) return send(conn, { t: 'error', code: 'forbidden' });
     const room = entry.room, seat = entry.seat;
     touch(room);
@@ -163,15 +163,16 @@ function createRoomHub(options = {}) {
     if (token) { // token holders reclaim their own seat when it is vacant
       for (const s of [1, 2]) if (room.seats[s].token === token && !room.seats[s].conn) { seat = s; break; }
     }
-    if (!seat) { // the room code itself is the access secret: any vacant seat can be taken
-      for (const s of [1, 2]) if (!room.seats[s].conn) { seat = s; break; }
-    }
+    if (token && !seat) return send(conn, { t: 'error', code: 'forbidden' });
+    // A public invitation can only claim the never-used guest seat.
+    // Disconnected players keep their seats, protected by their private token.
+    if (!seat && room.phase === 'waiting' && !room.seats[2].name) seat = 2;
     if (!seat) return send(conn, { t: 'error', code: 'full' });
     const resumeSeat = room.seats[seat];
     resumeSeat.conn = conn;
     resumeSeat.name = clampName(msg.name) || resumeSeat.name || (seat === 2 ? '橙方' : '蓝方');
     conns.set(conn, { room, seat });
-    if (room.phase === 'waiting') room.phase = 'playing';
+    if (room.phase === 'waiting' && room.seats[1].conn && room.seats[2].conn) room.phase = 'playing';
     send(conn, roomInfo(room, seat, resumeSeat.token));
     notifyPeer(room, seat, { t: 'peer', role: seat, name: resumeSeat.name });
   }
@@ -201,3 +202,4 @@ function createRoomHub(options = {}) {
 }
 
 module.exports = { createRoomHub, clampName, CODE_CHARS };
+

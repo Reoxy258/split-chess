@@ -50,3 +50,12 @@
 .room-status .code{font-size:24px;font-weight:800;letter-spacing:6px;color:var(--blue);line-height:1.2}
 .room-status.error{border-color:#efc6b0;background:#fdf3ed;color:#a34a2e}
 .utility #resign-button{color:#c2532f}
+
+.net-advanced{margin:12px 0 18px;font-size:12px;color:#5d6e63}
+.net-advanced summary{cursor:pointer;padding:10px 0}
+.net-advanced .room-server-note{grid-column:1/-1}
+#room-invite-link{width:100%;min-width:0;padding:10px;border:1px solid #dbe4da;border-radius:9px;font:inherit}
+.room-status[hidden]{display:none}
+.room-actions[hidden]{display:none}
+.room-join button{width:auto;flex:0 0 auto}
+

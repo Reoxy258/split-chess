@@ -14,6 +14,62 @@ const netSource = fs.readFileSync(path.join(__dirname, '..', 'net.js'), 'utf8');
 const Net = require('../net.js');
 const SAVE = 'split-chess.save.v1';
 
+test('invitation joins automatically, overrides a stale server, and contains no seat token', async () => {
+  const hub = createRoomHub();
+  const host = fixture({ hub });
+  host.get('mode-online').click();
+  host.get('room-create').click();
+  await host.tick();
+  const link = host.get('room-invite-link').value;
+  assert.ok(link);
+  assert.equal(new URL(link).searchParams.get('room'), host.save().online.code);
+  assert.ok(!link.includes(host.save().online.token));
+  const guest = fixture({ hub, href: link, rememberedServer: 'old.example.com',
+    rawSave: host.store.get(SAVE) }); // same-browser tabs share localStorage
+  await guest.tick();
+  assert.equal(guest.save().online.role, 2, 'invite does not steal the host identity');
+  assert.equal(guest.sockets[0].url, host.sockets[0].url);
+  assert.equal(guest.get('room-dialog').open, false);
+  const saved = guest.store.get(SAVE);
+  guest.sockets[0].close();
+  const reload = fixture({ hub, href: link, rawSave: saved, seatStore: guest.seatStore });
+  await reload.tick();
+  assert.equal(reload.save().online.role, 2);
+  assert.equal(reload.save().online.token, guest.save().online.token);
+  host.sockets[0].close();
+  const hostReload = fixture({ hub, rawSave: guest.store.get(SAVE), seatStore: host.seatStore });
+  await hostReload.tick();
+  assert.equal(hostReload.save().online.role, 1, 'host tab keeps its own save when another tab writes localStorage');
+});
+
+test('Pages uses the maintained default server and expired invitations stay actionable', async () => {
+  const hub = createRoomHub();
+  const page = fixture({ hub, href: 'https://example.github.io/split-chess/',
+    configuredServer: 'wss://relay.example.com/ws' });
+  page.get('mode-online').click();
+  page.get('room-create').click();
+  await page.tick();
+  assert.equal(page.sockets[0].url, 'wss://relay.example.com/ws');
+  const invalid = fixture({ hub, href: 'https://example.github.io/split-chess/?room=ZZZZZ&server=relay.example.com' });
+  await invalid.tick();
+  assert.match(invalid.get('room-status').textContent, /过期/);
+  assert.equal(invalid.get('room-create').disabled, false);
+});
+
+test('malformed invite does not connect and a slow initial connection can be retried', async () => {
+  const hub = createRoomHub();
+  const invalid = fixture({ hub, href: 'http://127.0.0.1:4173/?room=invalid' });
+  assert.equal(invalid.sockets.length, 0);
+  const page = fixture({ hub });
+  page.get('mode-online').click();
+  page.get('room-create').click();
+  page.sockets[0].readyState = 2; // simulate stalled handshake
+  await page.tick();
+  await page.tick(); // 90s deadline
+  assert.equal(page.get('room-create').disabled, false);
+  assert.match(page.get('room-status').textContent, /连接/);
+});
+
 test('normalizeUrl completes bare addresses with scheme and /ws path', () => {
   // Node has no page location: bare hosts resolve over plain ws://.
   assert.equal(Net.normalizeUrl('split-chess.onrender.com'), 'ws://split-chess.onrender.com/ws');
@@ -62,18 +118,20 @@ globalThis.WebSocket = class {
 };
 `;
 
-function fixture({ rawSave, hub }) {
+function fixture({ rawSave, hub, href = 'http://127.0.0.1:4173/', rememberedServer, configuredServer, seatStore = new Map() }) {
   const ids = new Map(), timers = [], events = {}, store = new Map(), sockets = [];
   const intervals = [], documentEvents = {};
   let now = 0;
+  let timerId = 0;
   store.set(SAVE, rawSave === undefined ? JSON.stringify({ version: 2, state: E.newGame(), mode: 'local', quick: false, history: [], clock: E.newClock(7) }) : rawSave);
   store.set('split-chess.learned.v1', '1');
+  if (rememberedServer) store.set('split-chess.server.v1', rememberedServer);
   class El {
     constructor() {
       this.children = []; this.listeners = {}; this.dataset = {}; this.style = { setProperty(key, value) { this[key] = value; } };
       this.classList = { toggle() {}, add() {} };
     }
-    append(v) { this.children.push(v); }
+    append(...v) { this.children.push(...v); }
     replaceChildren() { this.children = []; }
     setAttribute(k, v) { this[k] = v; }
     addEventListener(k, v) { this.listeners[k] = v; }
@@ -95,9 +153,11 @@ function fixture({ rawSave, hub }) {
     clearInterval: () => {},
     localStorage: { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) },
     matchMedia: () => ({ matches: false }),
-    setTimeout: (fn, delay) => { timers.push({ fn, delay }); return timers.length; },
-    clearTimeout: () => {},
-    location: { protocol: 'http:', host: '127.0.0.1:4173', hostname: '127.0.0.1', search: '', href: 'http://127.0.0.1:4173/' },
+    setTimeout: (fn, delay) => { const id = ++timerId; timers.push({ fn, delay, id }); return id; },
+    clearTimeout: id => { const i = timers.findIndex(t => t.id === id); if (i >= 0) timers.splice(i, 1); },
+    sessionStorage: { getItem: k => seatStore.get(k) ?? null, setItem: (k, v) => seatStore.set(k, v) },
+    location: new URL(href),
+    URL,
     URLSearchParams,
     __hub: hub,
     __sockets: sockets,
@@ -105,6 +165,7 @@ function fixture({ rawSave, hub }) {
     console: { log() {}, error() {} },
   };
   sandbox.window = sandbox;
+  doc.querySelector = () => configuredServer ? { content: configuredServer } : null;
   const context = vm.createContext(sandbox);
   vm.runInContext(netSource, context);
   vm.runInContext(WS_CLASS, context);
@@ -118,7 +179,7 @@ function fixture({ rawSave, hub }) {
     for (let i = 0; i < rounds; i++) { await tick(); }
   }
   return {
-    get, sockets, store, tick, settle,
+    get, sockets, store, seatStore, tick, settle,
     advance(ms) { now += ms; intervals.forEach(fn => fn()); },
     save: () => JSON.parse(store.get(SAVE)),
     cell: i => get('board').children[i],
@@ -299,3 +360,4 @@ test('a v3 online save reconnects automatically on load', async () => {
   assert.equal(reloaded.save().online.role, 2);
   assert.deepEqual(reloaded.save().state, host.save().state, 'reload restores the exact board');
 });
+
