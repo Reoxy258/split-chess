@@ -1,6 +1,6 @@
 {
   "name": "split-chess",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "private": true,
   "description": "分裂棋 — 满四分裂，连锁夺棋的手机休闲棋类游戏",
   "scripts": {
