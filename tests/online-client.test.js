@@ -9,6 +9,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const E = require('../engine.js');
 const { createRoomHub } = require('../scripts/rooms.js');
+const { createStore } = require('../scripts/store.js');
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
 const netSource = fs.readFileSync(path.join(__dirname, '..', 'net.js'), 'utf8');
 const Net = require('../net.js');
@@ -235,6 +236,43 @@ test('resignation ends the match on both sides; rematch restarts it', async () =
   assert.equal(host.save().state.winner, 0);
   assert.deepEqual(guest.save().state, host.save().state);
   assert.match(host.get('status').textContent, /新的一局开始/);
+});
+
+test('player ids ride along; resignation settles server-side stats on both clients', async () => {
+  const store = createStore({ file: null });
+  const hub = createRoomHub({ store });
+  const host = fixture({ hub }), guest = fixture({ hub });
+  host.get('mode-online').click();
+  host.get('net-name').value = '小明';
+  host.get('room-create').click();
+  await host.tick();
+  const code = host.save().online.code;
+  guest.get('mode-online').click();
+  guest.get('net-name').value = '小红';
+  guest.get('room-code').value = code;
+  guest.get('room-join').click();
+  await guest.tick(); await host.tick();
+
+  // each browser minted a persistent player id and the server profiled it
+  const hostId = host.store.get('split-chess.player.v1'), guestId = guest.store.get('split-chess.player.v1');
+  assert.match(hostId, /^[0-9a-f-]{36}$/i);
+  assert.match(guestId, /^[0-9a-f-]{36}$/i);
+  assert.notEqual(hostId, guestId);
+  assert.equal(store.playerStats(hostId).name, '小明');
+  assert.equal(store.playerStats(guestId).name, '小红');
+
+  guest.get('resign-button').click();
+  guest.get('confirm-ok').click();
+  await guest.settle(4); await host.settle(4);
+
+  assert.equal(host.save().state.winner, 1);
+  assert.equal(store.playerStats(hostId).wins, 1);
+  assert.equal(store.playerStats(guestId).losses, 1);
+  assert.equal(store.playerStats(hostId).games, 1);
+  assert.match(host.get('name-2').textContent, /小红（0胜1负）/, 'host sees the guest record settle live (the resigner lost)');
+  assert.match(guest.get('name-1').textContent, /小明（1胜0负）/, 'guest sees the host record settle live');
+  assert.match(host.get('status').textContent, /战绩 1胜0负/);
+  assert.match(guest.get('status').textContent, /战绩 0胜1负/);
 });
 
 test('an illegal inbound move triggers a log resync instead of corrupting the board', async () => {

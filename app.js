@@ -3,6 +3,7 @@
   'use strict';
   const E = SplitChess, $ = id => document.getElementById(id);
   const Net = typeof SplitChessNet !== 'undefined' ? SplitChessNet : null;
+  const myId = Net ? Net.playerId() : null; // 轻量玩家 ID：浏览器一次性生成，服务器据此记账
   let SIZE = E.BOARD_SIZE, TRAINING_CELL = 0;
   const KEY = 'split-chess.save.v1', SEEN = 'split-chess.learned.v1';
   const read = key => { try { return localStorage.getItem(key); } catch { return null; } };
@@ -10,7 +11,8 @@
   let state = E.newGame(), mode = 'ai', history = [], busy = false, thinking = false, epoch = 0, worker = null;
   let quick = matchMedia('(prefers-reduced-motion: reduce)').matches, tutorial = -1, tutorialDone = false, beforeTutorial = null, pending = null;
   // 在线对战：session 传输会话；online 房间信息；inbound 远端事件队列；guestClockAt 计时快照时刻。
-  let session = null, online = null, inbound = [], guestClockAt = -1, netState = 'offline', rematchAsked = false, clockBeats = 0, myName = '';
+  // resultKey 已上报终局的指纹（避免重复上报）；myStats/foeStats 走服务器战绩。
+  let session = null, online = null, inbound = [], guestClockAt = -1, netState = 'offline', rematchAsked = false, clockBeats = 0, myName = '', resultKey = '';
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const buttons = [];
   let restored = false, clock = E.newClock(), lastTick = performance.now(), lastSave = lastTick;
@@ -150,6 +152,15 @@
     if (!count) return '';
     return '<span class="stone" aria-hidden="true">' + count + '</span>';
   }
+  /* 服务器战绩的两种展示：纯文本（状态行用）与带括号的徽标（对方昵称后用）。 */
+  function statsText(stats) {
+    if (!stats || !stats.games) return '';
+    let text = stats.wins + '胜' + stats.losses + '负' + (stats.draws ? '平' + stats.draws : '');
+    if (stats.streak >= 2) text += ' · ' + stats.streak + '连胜';
+    else if (stats.streak <= -2) text += ' · ' + (-stats.streak) + '连败';
+    return text;
+  }
+  const statsBadge = stats => { const text = statsText(stats); return text ? '（' + text + '）' : ''; };
   function paint(cells = state.cells, fx = {}) {
     const onlineLocked = mode === 'online' && (!session?.isOpen() || !online || online.peerGone || state.turn !== online.role);
     const locked = busy || thinking || state.winner || (tutorial < 0 && clock.paused) || (tutorial >= 0 && tutorialDone) || onlineLocked;
@@ -173,8 +184,8 @@
       $('player-' + p).classList.toggle('active', !state.winner && state.turn === p);
     });
     $('status-dot').style.background = state.turn === 1 ? 'var(--blue)' : 'var(--orange)';
-    $('name-1').textContent = mode === 'ai' ? '你 · 蓝方' : mode === 'online' ? (online?.role === 1 ? '你' + (myName ? '（' + myName + '）' : '') + ' · 蓝方' : (online?.peerName || '对方') + ' · 蓝方') : '蓝方';
-    $('name-2').textContent = mode === 'ai' ? '电脑 · 橙方' : mode === 'online' ? (online?.role === 2 ? '你' + (myName ? '（' + myName + '）' : '') + ' · 橙方' : (online?.peerName || '对方') + ' · 橙方') : '橙方';
+    $('name-1').textContent = mode === 'ai' ? '你 · 蓝方' : mode === 'online' ? (online?.role === 1 ? '你' + (myName ? '（' + myName + '）' : '') + ' · 蓝方' : (online?.peerName || '对方') + statsBadge(online?.foeStats) + ' · 蓝方') : '蓝方';
+    $('name-2').textContent = mode === 'ai' ? '电脑 · 橙方' : mode === 'online' ? (online?.role === 2 ? '你' + (myName ? '（' + myName + '）' : '') + ' · 橙方' : (online?.peerName || '对方') + statsBadge(online?.foeStats) + ' · 橙方') : '橙方';
     $('mode-label').textContent = tutorial >= 0 ? '互动教程' : mode === 'ai' ? '人机对战' : mode === 'online' ? '在线对战' : '同机双人';
     $('move-number').textContent = tutorial >= 0 ? '第 ' + (tutorial + 1) + ' / 4 课' : '第 ' + (state.ply + (state.winner ? 0 : 1)) + ' 手';
     $('mode-ai').classList.toggle('selected', mode === 'ai');
@@ -204,10 +215,21 @@
     document.body.classList.toggle('tutorial', tutorial >= 0);
     document.body.classList.toggle('result', !!state.winner && tutorial < 0);
     renderClock();
+    reportResultOnce();
+  }
+  /* 终局上报：房主是棋局权威，把自然终局（点数/清空/超时）报给服务器结算战绩，
+     服务器回发 'result' 事件刷新双方显示。同一局只上报一次；认输由服务器直接结算，
+     此处再报也会被房间的 recorded 标记挡住，不会重复记账。 */
+  function reportResultOnce() {
+    if (mode !== 'online' || !state.winner || online?.role !== 1 || !session?.isOpen()) return;
+    const key = online.code + ':' + state.winner + ':' + (state.resultReason || '') + ':' + state.ply;
+    if (resultKey === key) return;
+    resultKey = key;
+    session.sendResult({ winner: state.winner, reason: state.resultReason || '', points: E.totals(state).points });
   }
   function status(text) { $('status').textContent = text; }
   function normalStatus() {
-    if (state.winner) status((mode === 'ai' ? state.winner === 1 ? '你赢了！' : '电脑赢下了这一局。' : mode === 'online' ? (state.winner === online?.role ? '你赢了！' : '对方赢下了这一局。') : (state.winner === 1 ? '蓝方' : '橙方') + '获胜！') + (state.resultReason === 'time' ? ' 时间到，点数 ' + E.totals(state).points.join(' : ') : state.resultReason === 'resign' ? (mode === 'online' ? (state.winner === online?.role ? ' · 对方认输' : ' · 你认输了') : ' · 一方认输') : ' 对方棋子已全部清空'));
+    if (state.winner) status((mode === 'ai' ? state.winner === 1 ? '你赢了！' : '电脑赢下了这一局。' : mode === 'online' ? (state.winner === online?.role ? '你赢了！' : '对方赢下了这一局。') : (state.winner === 1 ? '蓝方' : '橙方') + '获胜！') + (state.resultReason === 'time' ? ' 时间到，点数 ' + E.totals(state).points.join(' : ') : state.resultReason === 'resign' ? (mode === 'online' ? (state.winner === online?.role ? ' · 对方认输' : ' · 你认输了') : ' · 一方认输') : ' 对方棋子已全部清空') + (mode === 'online' && statsText(online?.myStats) ? ' · 战绩 ' + statsText(online.myStats) : ''));
     else if (clock.paused && tutorial < 0) status('棋局已暂停 · 点击继续对局恢复计时');
     else if (mode === 'online' && tutorial < 0) {
       if (!session?.isOpen()) status('连接中断 · 正在自动重连');
@@ -514,7 +536,7 @@
   }
   function applyRestart(size) {
     cancelAsync();
-    inbound = []; rematchAsked = false; guestClockAt = -1; clockBeats = 0;
+    inbound = []; rematchAsked = false; guestClockAt = -1; clockBeats = 0; resultKey = '';
     state = E.newGame({ size }); clock = E.newClock(size); history = []; mode = 'online'; lastTick = performance.now();
     buildBoard();
     $('coach-action').disabled = false;
@@ -533,7 +555,12 @@
         const names = Array.isArray(data.names) ? data.names : [];
         const peerName = names[3 - data.role - 1] || '';
         online = { role: data.role, code: data.code, token: data.token, server: session?.url || null, peerName, peerGone: !peerName };
+        if (Array.isArray(data.stats)) { // 服务器战绩：[蓝方, 橙方]
+          online.myStats = data.stats[data.role - 1] || null;
+          online.foeStats = data.stats[2 - data.role] || null;
+        }
         myName = names[data.role - 1] || myName;
+        resultKey = '';
         mode = 'online';
         if (data.resume) reconcile(data.resume);
         else {
@@ -553,6 +580,7 @@
         if (!online) return;
         online.peerGone = false;
         online.peerName = data.name || online.peerName;
+        if (data.stats !== undefined) online.foeStats = data.stats; // 对方的服务器战绩
         closeRoomDialog();
         status((data.name || '对方') + ' 已就位 · ' + (online.role === 1 ? '你执蓝方先行，点空格开局' : '对方执蓝方先行'));
         persist(); paint(); normalStatus();
@@ -593,6 +621,15 @@
       case 'resigned': {
         if (mode !== 'online' || !online) return;
         queueInbound({ type: 'resign', role: data.role });
+        return;
+      }
+      case 'result': { // 服务器结算完毕：刷新双方战绩（终局状态行与对方昵称徽标）
+        if (mode !== 'online' || !online) return;
+        if (Array.isArray(data.stats)) {
+          online.myStats = data.stats[online.role - 1] || null;
+          online.foeStats = data.stats[2 - online.role] || null;
+        }
+        persist(); paint(); normalStatus();
         return;
       }
       case 'rematch-req': {
@@ -672,7 +709,7 @@
     Net.rememberServer($('net-server').value.trim());
     roomDialogNote('正在连接 ' + url + ' …');
     $('room-create').disabled = true; $('room-join').disabled = true;
-    startOnlineSession(url, s => s.create({ size: SIZE, name: myName }));
+    startOnlineSession(url, s => s.create({ size: SIZE, name: myName, id: myId }));
   };
   $('room-join').onclick = () => {
     if (!Net) return;
@@ -685,7 +722,7 @@
     Net.rememberServer($('net-server').value.trim());
     roomDialogNote('正在加入房间 ' + code + ' …');
     $('room-create').disabled = true; $('room-join').disabled = true;
-    startOnlineSession(url, s => s.join({ code, name: myName, token: online?.code === code ? online.token : null }));
+    startOnlineSession(url, s => s.join({ code, name: myName, token: online?.code === code ? online.token : null, id: myId }));
   };
   $('confirm-cancel').onclick = () => { pending = null; $('confirm-dialog').close(); };
   $('confirm-ok').onclick = () => { const action = pending; pending = null; $('confirm-dialog').close(); action?.(); };
@@ -732,7 +769,7 @@
     if (url) {
       status('正在重新连接房间 ' + online.code + ' …');
       session = new Net.Session({ url, onEvent: netEvent });
-      session.join({ code: online.code, name: Net.rememberedName() || myName, token: online.token });
+      session.join({ code: online.code, name: Net.rememberedName() || myName, token: online.token, id: myId });
     } else status('在线对战需要服务器地址 · 点「在线对战」重新加入');
   }
 })();

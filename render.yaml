@@ -1,6 +1,7 @@
 # Render blueprint: one small Node service that serves the game and relays
-# online rooms on the same port. The free plan sleeps after 15 idle minutes;
-# the first connection then waits ~50s for the cold start.
+# online rooms on the same port. The free plan sleeps after 15 idle minutes
+# AND has no persistent disk: set SPLIT_CHESS_DB to a managed database later,
+# or self-host on a VPS (see README 部署节) for full SQLite persistence.
 services:
   - type: web
     name: split-chess
@@ -13,4 +14,4 @@ services:
       - key: HOST
         value: 0.0.0.0
       - key: NODE_VERSION
-        value: "22"
+        value: "24"

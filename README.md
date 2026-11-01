@@ -40,28 +40,51 @@
 悔棋只撤回棋盘，不返还整局或当前单步已消耗时间。到时结算后的棋局不可悔棋。
 切换尺寸会重开，已有进度时先确认；旧6×6与10×10存档及同尺寸历史保留原局，不裁切或扩展。
 
-## 在线对战（1.3.0）
+## 在线对战（1.3.0 起，1.4.0 增持久化与战绩）
 
 好友房间码模式：创建房间得到 5 位房间码（数字与大写字母，不含易混淆的 0/1/I/L/O），发给好友加入即开局。创建者为蓝方先行；计时、超时跳过、加时与单机版完全一致。房间码即访问凭证，知道码的人可加入空位；掉线后 10 分钟内重进（或刷新页面自动重连）可恢复原座与原局。
 
-- 协议：JSON over WebSocket，服务器只做房间管理与转发并保留紧凑棋谱（最近权威快照 + 其后着法），不落盘、无数据库。
+- 协议：JSON over WebSocket，服务器只做房间管理与转发并保留紧凑棋谱（最近权威快照 + 其后着法）。1.4.0 起可选落盘（见下）：对局日志与玩家战绩存入内置 SQLite，进程重启后 10 分钟内的对局自动恢复，掉线方重连即可续战。
 - 同步：引擎确定不可变，采用锁步——双方只传落子坐标，本地各自重演；**房主客户端为棋局权威**，负责计时与超时事件的判定并定期广播快照，访客仅做本地插值显示，绝不自行判定。失步时向服务器索取棋谱重放恢复。
 - 治理：超时跳过、认输、再来一局（双方确认）、断线等待与离开通知均在双端同步；在线模式禁用悔棋与棋盘尺寸切换。
+- 战绩（1.4.0）：浏览器首次进入在线模式生成轻量玩家 ID（localStorage UUID，免注册），建房/加入时连同昵称一并登记；对局结束（自然终局由房主上报、认输由服务器直接结算）后双方胜负/局数/连胜即时结算并显示在 HUD 昵称与终局状态行。中途弃局离开不计分。战绩查询接口：`GET /api/stats/<玩家ID>`。
 
-### 自建对战服务器
+### 自建对战服务器（VPS 持久化）
 
 `npm start` 的同一端口已含对战服务（`/ws`），本地或局域网开两个浏览器标签即可实测：
 
     npm start            # http://127.0.0.1:4173/ （房间服务同端口）
     HOST=0.0.0.0 PORT=80 npm start   # 公网/局域网自托管
 
-免费托管（Render 等）：仓库已附 `render.yaml`（free 套餐、`/healthz` 健康检查、`HOST=0.0.0.0`），新建 Web Service 指向本仓库即可，无需环境变量。任何能跑 Node 20+ 的主机（VPS、Railway、Fly.io 等）都可用上述 HOST/PORT 环境变量自托管。免费档位空闲约 15 分钟会休眠，首个连接需等待约 50 秒冷启动。
+**数据落盘**：Node ≥ 23.4（建议 24）自带 `node:sqlite`，服务器默认把对局与战绩写入 `data/split-chess.sqlite`（目录自动创建），可用 `SPLIT_CHESS_DB` 指定其他路径；设为 `:memory:` 或在旧版 Node 上运行则退回纯内存（功能正常，重启丢局）。`/healthz` 会回报当前存储模式与恢复房间数。磁盘写满等存储故障只会降级为不落盘，不会拖垮对战服务。
+
+VPS 上的最小 systemd 部署（以 `/opt/split-chess` 为例）：
+
+    [Unit]
+    Description=split-chess server
+    After=network.target
+
+    [Service]
+    WorkingDirectory=/opt/split-chess
+    ExecStart=/usr/bin/node scripts/serve.js
+    Environment=HOST=0.0.0.0
+    Environment=PORT=80
+    # Environment=SPLIT_CHESS_DB=/var/lib/split-chess/game.db
+    Restart=always
+    User=www-data
+
+    [Install]
+    WantedBy=multi-user.target
+
+要点：数据库文件与游戏文件放持久磁盘（默认在仓库 `data/` 下）；反代 HTTPS 时页面与 WebSocket 同源即可，游戏内「对战服务器」留空自动连接。零第三方依赖，`git clone` 后无需 `npm install` 直接可跑。
+
+免费托管（Render 等）：仓库已附 `render.yaml`（free 套餐、`/healthz` 健康检查、`HOST=0.0.0.0`）。注意 free 套餐无持久磁盘——休眠/重部署会清空文件，SQLite 战绩会随之丢失（对战本身不受影响）；要保留战绩请挂付费磁盘或改用 `SPLIT_CHESS_DB` 指向托管数据库，或直接用上面的 VPS 方案。任何能跑 Node 的主机（Railway、Fly.io 挂卷等）都可用 HOST/PORT/SPLIT_CHESS_DB 自托管。
 
 GitHub Pages 在线版（静态托管）没有内置服务：在房间面板的「对战服务器」一栏填入你的服务器地址即可；只填域名（如 `split-chess.onrender.com`）会自动补全协议与 `/ws` 路径，也可填完整地址（如 `wss://split-chess.onrender.com/ws`）。地址会记住，也可用 `?server=` 链接参数指定。自托管页面（从服务器打开）留空即可自动使用同源地址。
 
 ## 本地开发
 
-不需要安装第三方依赖，使用 Node.js 20 或更高版本。
+不需要安装第三方依赖，使用 Node.js 20 或更高版本（对战持久化与战绩需要 ≥ 23.4 的内置 `node:sqlite`，低版本自动降级内存模式）。
 
     npm start
     npm test
@@ -73,18 +96,21 @@ GitHub Pages 在线版（静态托管）没有内置服务：在房间面板的�
 ## 实现
 
 - engine.js：不可变状态、确定性规则、同步连锁、两层搜索电脑策略。
-- net.js：浏览器传输层——WebSocket 会话（自动重连退避、20 秒心跳 + 45 秒静默看门狗）、服务器地址解析（`?server=` > 同源 > 记忆值）、棋谱重放。
-- app.js：交互、动画、教程、存档和取消过期异步任务；在线模式（房间面板、认输/再来一局、时钟房主权威、远端事件队列）。
+- net.js：浏览器传输层——WebSocket 会话（自动重连退避、20 秒心跳 + 45 秒静默看门狗）、服务器地址解析（`?server=` > 同源 > 记忆值）、棋谱重放、轻量玩家 ID（localStorage UUID，`crypto.randomUUID` 缺席时降级）。
+- app.js：交互、动画、教程、存档和取消过期异步任务；在线模式（房间面板、认输/再来一局、时钟房主权威、远端事件队列、终局上报与战绩展示）。
 - ai-worker.js：将在线电脑搜索放入 Worker，保持界面响应。
 - scripts/ws.js：手写 RFC 6455 帧协议（握手、掩码编解码、心跳、优雅关闭），零依赖。
-- scripts/rooms.js：房间枢纽——建房/加入/转发/紧凑棋谱/断线重连/TTL 清扫/非法输入防护。
-- scripts/serve.js：静态文件 + `/ws` 升级 + `/healthz`，单进程自托管入口。
-- style.css / index.html：响应式棋子界面（chess-crash 同款数字圆子：天蓝/琥珀底 + 白色数字，三点将裂格赤红呼吸脉冲）；键盘方向键和 Enter/空格亦可操作。
+- scripts/rooms.js：房间枢纽——建房/加入/转发/紧凑棋谱/断线重连/TTL 清扫/非法输入防护；可选写入存储层（对局落盘、终局结算、重启恢复）。
+- scripts/store.js：存储层——`node:sqlite`（内置，零第三方依赖）与内存双后端同接口；玩家档案（胜负/平/连胜）、对局结果、房间日志；运行时故障降级为不落盘。
+- scripts/serve.js：静态文件 + `/ws` 升级 + `/healthz`（含存储模式）+ `/api/stats/:id`，单进程自托管入口。
+- style.css / index.html：响应式棋子界面（筹码内环棋子 + 经典棋盘格，v1.3.2 定稿）；键盘方向键和 Enter/空格亦可操作。
 - tests/rules-review.test.js：独立串行参照、4000 手随机对照、密集棋盘和 AI 验证。
 - tests/ui-lifecycle.test.js：教程、动画锁、取消 AI、悔棋、恢复等生命周期回归。
 - tests/ws-protocol.test.js：真实 TCP 上的握手与帧协议回归（扩展长度、分帧拒绝、超长拒绝、心跳判死）。
 - tests/rooms.test.js：房间枢纽回归（转发、棋谱压缩、重连恢复、TTL、非法输入）。
-- tests/online-client.test.js：双 vm 实例 + 真实房间枢纽的全栈集成（锁步一致性、时钟跳过同步、认输/再来一局、失步恢复、断线重连、v3 存档自动重连）。
+- tests/rooms-persistence.test.js：持久化回归（重启恢复、TTL 过期、认输/终局结算、幂等记账、重开再计、清扫同步）。
+- tests/store.test.js：存储层双后端套件（内存 + 真实 SQLite 文件：往返、连胜数学、降级路径）。
+- tests/online-client.test.js：双 vm 实例 + 真实房间枢纽的全栈集成（锁步一致性、时钟跳过同步、认输/再来一局、失步恢复、断线重连、v3 存档自动重连、玩家 ID 与战绩结算）。
 
 ## 验证记录（1.0.0）
 
@@ -92,6 +118,12 @@ GitHub Pages 在线版（静态托管）没有内置服务：在房间面板的�
 刷新续局、人机整轮悔棋，以及双人完整连锁获胜与终局锁定。
 手机视口检查覆盖 320px 和 390px；电脑布局也已检查。
 视口模拟不等于手机真机验收；iOS/Android 真机触控与性能仍待验证。
+
+## 1.4.0 对局持久化与战绩统计（内置 SQLite）
+
+自托管服务器可选落盘：`scripts/store.js` 用 Node 内置的 `node:sqlite`（零第三方依赖红线不破，Node ≥ 23.4 免旗标）把房间日志、对局结果与玩家档案写入单个 SQLite 文件（默认 `data/split-chess.sqlite`，`SPLIT_CHESS_DB` 可改；旧版 Node 或不可写磁盘自动降级纯内存，功能不受影响）。服务器重启时 10 分钟 TTL 内的活跃房间自动恢复——掉线方重连即按 token 取回原座、按紧凑棋谱重演续战，双端无感。
+
+战绩统计：浏览器生成轻量玩家 ID（UUID 存 localStorage，免注册免密码）随建房/加入上报；自然终局由房主上报、认输由服务器直接结算，胜负/平局/连胜（含最长连胜）即刻入账并在双方 HUD 昵称徽标与终局状态行刷新；中途弃局离开不计分；重开一局重新计。新增 `GET /api/stats/:id` 查询接口与 `/healthz` 存储模式回报。测试从 93 项增至 120 项（存储双后端、重启恢复、结算幂等、全栈战绩链路），CI 升 Node 24 以覆盖真实 SQLite 路径。
 
 ## 1.3.2 棋子与棋盘重做（按反馈）
 

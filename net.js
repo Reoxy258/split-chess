@@ -2,9 +2,35 @@
    session, and deterministic replay of the server move log. UMD like engine.js. */
 (function (root) {
   'use strict';
-  const SERVER_KEY = 'split-chess.server.v1', NAME_KEY = 'split-chess.name.v1';
+  const SERVER_KEY = 'split-chess.server.v1', NAME_KEY = 'split-chess.name.v1', PLAYER_KEY = 'split-chess.player.v1';
   const read = key => { try { return localStorage.getItem(key); } catch { return null; } };
   const write = (key, value) => { try { localStorage.setItem(key, value); return true; } catch { return false; } };
+
+  /* Lightweight player identity: a UUID kept in localStorage, generated once per
+     browser. No password — the id is only a stats key. randomUUID needs a secure
+     context, so non-HTTPS self-hosted pages fall back to getRandomValues (and
+     ultimately Math.random, still fine for a casual record key). */
+  function makeId() {
+    try { if (root.crypto && typeof root.crypto.randomUUID === 'function') return root.crypto.randomUUID(); } catch { /* fall through */ }
+    const bytes = new Array(16);
+    if (root.crypto && typeof root.crypto.getRandomValues === 'function') {
+      const buf = new Uint8Array(16);
+      root.crypto.getRandomValues(buf);
+      for (let i = 0; i < 16; i++) bytes[i] = buf[i];
+    } else for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+    bytes[6] = (bytes[6] & 15) | 64; // UUID v4 shape
+    bytes[8] = (bytes[8] & 63) | 128;
+    let hex = '';
+    for (const b of bytes) hex += b.toString(16).padStart(2, '0');
+    return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
+  }
+  function playerId() {
+    const existing = read(PLAYER_KEY);
+    if (existing && /^[0-9a-f-]{8,64}$/i.test(existing)) return existing;
+    const id = makeId();
+    write(PLAYER_KEY, id);
+    return id;
+  }
 
   function normalizeUrl(raw) {
     if (raw == null) return null;
@@ -56,7 +82,7 @@
     constructor({ url, onEvent }) {
       this.url = url; this.onEvent = onEvent;
       this.ws = null; this.open = false;
-      this.role = 0; this.token = null; this.room = null;
+      this.role = 0; this.token = null; this.room = null; this.id = null;
       this.pending = null;  // intent re-sent after every reconnect
       this.active = false;  // inside a room: reconnects are automatic
       this.backoff = 500; this.reconnectTimer = null;
@@ -103,14 +129,18 @@
       try { this.ws.send(JSON.stringify(obj)); return true; } catch { return false; }
     }
     isOpen() { return !!(this.ws && this.open); }
-    create({ size, name }) {
+    create({ size, name, id }) {
+      if (id) this.id = id;
       this.pending = { t: 'create', size, name: name ?? '' };
+      if (this.id) this.pending.id = this.id;
       this.active = true;
       this.connect();
     }
-    join({ code, name, token }) {
+    join({ code, name, token, id }) {
+      if (id) this.id = id;
       this.pending = { t: 'join', code: String(code || '').trim().toUpperCase(), name: name ?? '' };
       if (token) this.pending.token = token;
+      if (this.id) this.pending.id = this.id;
       this.active = true;
       this.connect();
     }
@@ -118,6 +148,7 @@
     sendClock(payload) { return this.rawSend({ t: 'clock', ...payload }); }
     sendStart() { return this.rawSend({ t: 'start' }); }
     resign() { return this.rawSend({ t: 'resign' }); }
+    sendResult({ winner, reason, points }) { return this.rawSend({ t: 'result', winner, reason: reason ?? '', points: points ?? null }); }
     rematch() { return this.rawSend({ t: 'rematch' }); }
     rematchOk() { return this.rawSend({ t: 'rematch-ok' }); }
     restart(size) { return this.rawSend({ t: 'restart', size }); }
@@ -148,13 +179,14 @@
       if (msg.t === 'room') {
         this.active = true; this.role = msg.role; this.token = msg.token; this.room = msg.code;
         this.pending = { t: 'join', code: msg.code, token: msg.token, name: this.pending?.name ?? '' };
+        if (this.id) this.pending.id = this.id;
       }
       this.emit(msg.t, msg);
     }
   }
 
   const api = {
-    Session, replay, normalizeUrl, defaultServerUrl,
+    Session, replay, normalizeUrl, defaultServerUrl, playerId,
     rememberedServer: () => read(SERVER_KEY),
     rememberServer: url => write(SERVER_KEY, String(url ?? '').trim()),
     rememberedName: () => read(NAME_KEY) || '',

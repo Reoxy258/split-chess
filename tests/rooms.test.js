@@ -168,8 +168,10 @@ test('resign ends the room and notifies both seats; the log records it', () => {
   drain(host); drain(guest);
 
   send(guest, { t: 'resign' });
-  assert.deepEqual(last(host), { t: 'resigned', role: 2 });
-  assert.deepEqual(last(guest), { t: 'resigned', role: 2 });
+  assert.ok(drain(host).some(m => m.t === 'resigned' && m.role === 2), 'host is told the guest resigned');
+  const guestGot = drain(guest);
+  assert.ok(guestGot.some(m => m.t === 'resigned' && m.role === 2), 'resigner is told too');
+  assert.ok(guestGot.some(m => m.t === 'result' && m.winner === 1 && m.reason === 'resign'), 'resign settles a result broadcast');
   assert.equal(hub.roomView(code).phase, 'ended');
   assert.equal(hub.roomView(code).resigned, 2);
   send(host, { t: 'move', index: 0 });

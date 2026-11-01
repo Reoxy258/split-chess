@@ -2,7 +2,10 @@
 /* Room hub: relay + move log for two-seat online matches. Transport-agnostic.
    The host seat (role 1, blue) is the game authority: it owns the clock and
    broadcasts snapshots; this hub only validates shapes, relays, and keeps a
-   compact log (latest authoritative state + trailing moves) for reconnection. */
+   compact log (latest authoritative state + trailing moves) for reconnection.
+   An optional store (scripts/store.js) persists the room log and player stats:
+   rooms inside the TTL are restored on startup, and finished games update both
+   players' win/loss records. Without a store the hub behaves exactly as before. */
 const crypto = require('node:crypto');
 
 const CODE_CHARS = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'; // no 0/O/1/I/L confusables
@@ -15,6 +18,7 @@ const DEFAULTS = {
   emptyTtlMs: 90 * 1000,
   now: Date.now,
   randomBytes: crypto.randomBytes,
+  store: null,
 };
 
 function clampName(raw) {
@@ -27,6 +31,9 @@ function validClockShape(clock) {
   return !!clock && [clock.remaining, clock.turnRemaining, clock.overtime].every(n => Number.isFinite(n) && n >= 0) &&
     Number.isSafeInteger(clock.overtime) && typeof clock.started === 'boolean' && typeof clock.paused === 'boolean';
 }
+function validPlayerId(id) {
+  return typeof id === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(id);
+}
 function validStateShape(state) {
   return !!state && Number.isInteger(state.size) && state.size >= 2 && state.size <= 10 &&
     Array.isArray(state.cells) && state.cells.length === state.size * state.size;
@@ -34,10 +41,75 @@ function validStateShape(state) {
 
 function createRoomHub(options = {}) {
   const cfg = { ...DEFAULTS, ...options };
+  const store = cfg.store || null;
   const rooms = new Map();
   const conns = new Map(); // conn -> { room, seat }
   const send = (conn, payload) => { try { conn.send(JSON.stringify(payload)); return true; } catch { return false; } };
   const otherSeat = seat => seat === 1 ? 2 : 1;
+  let restoredCount = 0;
+
+  /* ---- persistence helpers (all no-ops without a store) ---- */
+  function record(room) {
+    return {
+      code: room.code, size: room.size, phase: room.phase, restarts: room.restarts, recorded: !!room.recorded,
+      moves: room.moves, clock: room.clock, snapshotState: room.snapshotState, resigned: room.resigned,
+      createdAt: room.createdAt, lastSeen: room.lastSeen,
+      seats: {
+        1: { token: room.seats[1].token, name: room.seats[1].name, id: room.seats[1].id },
+        2: { token: room.seats[2].token, name: room.seats[2].name, id: room.seats[2].id },
+      },
+    };
+  }
+  const persistRoom = room => { if (store) store.saveRoom(record(room)); };
+  const seatStats = (room, seat) => {
+    const id = room.seats[seat].id;
+    return id ? (store?.playerStats(id) ?? null) : null;
+  };
+  /* Settle one finished game: mark the room recorded, write the result and both
+     players' stats, then tell both seats with their updated records. */
+  function settleResult(room, winner, reason, points) {
+    if (room.recorded) return;
+    room.recorded = true;
+    room.phase = 'ended';
+    if (store) {
+      store.recordResult({
+        code: room.code, size: room.size, winner, reason: reason || '', points: points || null,
+        seats: {
+          1: { id: room.seats[1].id, name: room.seats[1].name },
+          2: { id: room.seats[2].id, name: room.seats[2].name },
+        },
+        finishedAt: cfg.now(),
+      });
+    }
+    const stats = [seatStats(room, 1), seatStats(room, 2)];
+    [1, 2].forEach(s => room.seats[s].conn && send(room.seats[s].conn, { t: 'result', winner, reason: reason || '', points: points || null, stats }));
+    persistRoom(room);
+  }
+  function restoreRoom(rec) {
+    const seat = (n, fallback) => ({
+      conn: null,
+      token: String(rec.seats?.[n]?.token || ''),
+      name: clampName(rec.seats?.[n]?.name) || fallback,
+      id: validPlayerId(rec.seats?.[n]?.id) ? rec.seats[n].id : null,
+    });
+    return {
+      code: String(rec.code), size: Number(rec.size) || 7,
+      phase: rec.phase === 'waiting' ? 'waiting' : rec.phase === 'ended' ? 'ended' : 'playing',
+      restarts: rec.restarts || 0, recorded: !!rec.recorded,
+      createdAt: rec.createdAt || cfg.now(), lastSeen: rec.lastSeen || cfg.now(),
+      moves: Array.isArray(rec.moves) ? rec.moves.filter(n => Number.isInteger(n)) : [],
+      clock: rec.clock || null, snapshotState: rec.snapshotState || null, resigned: rec.resigned ?? null,
+      seats: { 1: seat(1, '蓝方'), 2: seat(2, '') },
+    };
+  }
+  if (store) { // restart recovery: hand back rooms still inside the TTL
+    const list = store.loadRooms();
+    for (const rec of Array.isArray(list) ? list : []) {
+      if (cfg.now() - (rec.lastSeen || 0) > cfg.roomTtlMs) { store.deleteRoom(rec.code); continue; }
+      rooms.set(rec.code, restoreRoom(rec));
+      restoredCount++;
+    }
+  }
 
   function newCode() {
     for (let attempt = 0; attempt < 64; attempt++) {
@@ -54,7 +126,7 @@ function createRoomHub(options = {}) {
     return { t: 'resume', size: room.size, state: room.snapshotState, moves: [...room.moves], clock: room.clock, phase: room.phase, resigned: room.resigned, restarts: room.restarts, names: [room.seats[1].name, room.seats[2].name] };
   }
   function roomInfo(room, role, token) {
-    const payload = { t: 'room', code: room.code, role, token, size: room.size, phase: room.phase, names: [room.seats[1].name, room.seats[2].name], restarts: room.restarts };
+    const payload = { t: 'room', code: room.code, role, token, size: room.size, phase: room.phase, names: [room.seats[1].name, room.seats[2].name], restarts: room.restarts, stats: [seatStats(room, 1), seatStats(room, 2)] };
     if (room.phase !== 'waiting') payload.resume = snapshot(room);
     return payload;
   }
@@ -79,7 +151,7 @@ function createRoomHub(options = {}) {
     room.seats[seat].conn = null;
     touch(room);
     notifyPeer(room, seat, { t: 'peer-left', role: seat, reason: reason === 'left' ? 'left' : 'drop' });
-    if (reason === 'left' && room.phase === 'playing') room.phase = 'ended';
+    if (reason === 'left' && room.phase === 'playing') { room.phase = 'ended'; persistRoom(room); } // abandoned, not scored
   }
 
   function receive(conn, text) {
@@ -100,6 +172,7 @@ function createRoomHub(options = {}) {
         if (!isIndex(msg.index, room.size)) return send(conn, { t: 'error', code: 'badmsg' });
         if (room.moves.length >= cfg.maxMoves) return send(conn, { t: 'error', code: 'limit' });
         room.moves.push(msg.index);
+        persistRoom(room);
         notifyPeer(room, seat, { t: 'move', role: seat, index: msg.index });
         return;
       }
@@ -109,6 +182,7 @@ function createRoomHub(options = {}) {
         if (msg.state && !validStateShape(msg.state)) return send(conn, { t: 'error', code: 'badmsg' });
         room.clock = { ...msg.clock };
         if (msg.state) { room.snapshotState = msg.state; room.moves = []; }
+        persistRoom(room);
         notifyPeer(room, seat, { t: 'clock', role: 1, clock: room.clock, events: msg.events, state: msg.state ?? null });
         return;
       }
@@ -116,8 +190,19 @@ function createRoomHub(options = {}) {
       case 'resign': {
         if (room.phase === 'ended') return send(conn, { t: 'error', code: 'ended' });
         room.resigned = seat;
-        room.phase = 'ended';
         [1, 2].forEach(s => room.seats[s].conn && send(room.seats[s].conn, { t: 'resigned', role: seat }));
+        settleResult(room, 3 - seat, 'resign', null);
+        return;
+      }
+      case 'result': { // the host reports a natural end (points, wipe-out, timeout)
+        if (seat !== 1) return send(conn, { t: 'error', code: 'forbidden' });
+        if (!Number.isInteger(msg.winner) || ![0, 1, 2].includes(msg.winner)) return send(conn, { t: 'error', code: 'badmsg' });
+        if (room.phase !== 'playing' || room.recorded) return; // late duplicate (e.g. after a resign): expected, stay quiet
+        const reason = String(msg.reason ?? '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 12);
+        const points = Array.isArray(msg.points) && msg.points.length === 2 && msg.points.every(n => Number.isFinite(n))
+          ? msg.points.map(n => Math.round(n)) : null;
+        if (msg.points != null && points === null) return send(conn, { t: 'error', code: 'badmsg' }); // points sent but malformed
+        settleResult(room, msg.winner, reason, points);
         return;
       }
       case 'rematch': return notifyPeer(room, seat, { t: 'rematch-req', role: seat });
@@ -125,8 +210,9 @@ function createRoomHub(options = {}) {
       case 'restart': {
         if (!Number.isInteger(msg.size) || msg.size < 5 || msg.size > 10) return send(conn, { t: 'error', code: 'badsize' });
         room.size = msg.size; room.phase = 'playing'; room.moves = []; room.clock = null;
-        room.snapshotState = null; room.resigned = null; room.restarts++;
+        room.snapshotState = null; room.resigned = null; room.restarts++; room.recorded = false;
         [1, 2].forEach(s => room.seats[s].conn && send(room.seats[s].conn, { t: 'restart', size: room.size }));
+        persistRoom(room);
         return;
       }
       case 'sync': return send(conn, snapshot(room));
@@ -142,13 +228,18 @@ function createRoomHub(options = {}) {
     if (rooms.size >= cfg.maxRooms) return send(conn, { t: 'error', code: 'limit' });
     const code = newCode();
     const room = {
-      code, size, phase: 'waiting', restarts: 0, createdAt: cfg.now(), lastSeen: cfg.now(),
+      code, size, phase: 'waiting', restarts: 0, recorded: false, createdAt: cfg.now(), lastSeen: cfg.now(),
       moves: [], clock: null, snapshotState: null, resigned: null,
-      seats: { 1: { conn: null, token: makeToken(), name: clampName(msg.name) || '蓝方' }, 2: { conn: null, token: makeToken(), name: '' } },
+      seats: {
+        1: { conn: null, token: makeToken(), name: clampName(msg.name) || '蓝方', id: validPlayerId(msg.id) ? msg.id : null },
+        2: { conn: null, token: makeToken(), name: '', id: null },
+      },
     };
     rooms.set(code, room);
     room.seats[1].conn = conn;
     conns.set(conn, { room, seat: 1 });
+    if (room.seats[1].id) store?.upsertPlayer(room.seats[1].id, room.seats[1].name);
+    persistRoom(room);
     send(conn, roomInfo(room, 1, room.seats[1].token));
   }
 
@@ -170,17 +261,23 @@ function createRoomHub(options = {}) {
     const resumeSeat = room.seats[seat];
     resumeSeat.conn = conn;
     resumeSeat.name = clampName(msg.name) || resumeSeat.name || (seat === 2 ? '橙方' : '蓝方');
+    if (validPlayerId(msg.id)) resumeSeat.id = msg.id;
     conns.set(conn, { room, seat });
     if (room.phase === 'waiting') room.phase = 'playing';
+    if (resumeSeat.id) store?.upsertPlayer(resumeSeat.id, resumeSeat.name);
+    persistRoom(room);
     send(conn, roomInfo(room, seat, resumeSeat.token));
-    notifyPeer(room, seat, { t: 'peer', role: seat, name: resumeSeat.name });
+    notifyPeer(room, seat, { t: 'peer', role: seat, name: resumeSeat.name, stats: seatStats(room, seat) });
   }
 
   function sweep() {
     const time = cfg.now();
     for (const [code, room] of rooms) {
       const vacant = !room.seats[1].conn && !room.seats[2].conn;
-      if (time - room.lastSeen > cfg.roomTtlMs || (vacant && time - room.lastSeen > cfg.emptyTtlMs)) rooms.delete(code);
+      if (time - room.lastSeen > cfg.roomTtlMs || (vacant && time - room.lastSeen > cfg.emptyTtlMs)) {
+        rooms.delete(code);
+        store?.deleteRoom(code);
+      }
     }
     return rooms.size;
   }
@@ -197,7 +294,7 @@ function createRoomHub(options = {}) {
     };
   }
 
-  return { attach, receive, detach, sweep, roomView, stats: () => ({ rooms: rooms.size }) };
+  return { attach, receive, detach, sweep, roomView, stats: () => ({ rooms: rooms.size, restored: restoredCount, persist: store ? store.mode : 'off' }) };
 }
 
 module.exports = { createRoomHub, clampName, CODE_CHARS };
