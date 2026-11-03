@@ -68,7 +68,7 @@ globalThis.WebSocket = class {
 };
 `;
 
-function fixture({ rawSave, hub, pageLocation }) {
+function fixture({ rawSave, hub, pageLocation, search = '' }) {
   const ids = new Map(), timers = [], events = {}, store = new Map(), sockets = [];
   const intervals = [], documentEvents = {};
   let now = 0;
@@ -103,7 +103,7 @@ function fixture({ rawSave, hub, pageLocation }) {
     matchMedia: () => ({ matches: false }),
     setTimeout: (fn, delay) => { timers.push({ fn, delay }); return timers.length; },
     clearTimeout: () => {},
-    location: { protocol: 'http:', host: '127.0.0.1:4173', hostname: '127.0.0.1', search: '', href: 'http://127.0.0.1:4173/' },
+    location: { protocol: 'http:', host: '127.0.0.1:4173', hostname: '127.0.0.1', search, href: 'http://127.0.0.1:4173/' },
     URLSearchParams, URL,
     __hub: hub,
     __sockets: sockets,
@@ -376,6 +376,60 @@ test('initial connection timeout restores actions and allows a successful retry'
   assert.ok(app.save().online.code);
   await app.tick(); // completed sessions ignore the initial deadline
   assert.doesNotMatch(app.get('room-status').textContent, /连接超时/);
+});
+
+test('game end opens the result dialog; its rematch button restarts the round', async () => {
+  const { host, guest } = await matchUp();
+  guest.get('resign-button').click();
+  guest.get('confirm-ok').click();
+  await guest.settle(2); await host.settle(2);
+  assert.ok(host.get('result-dialog').open, 'host sees the result dialog');
+  assert.equal(host.get('result-title').textContent, '你赢了！');
+  assert.equal(guest.get('result-title').textContent, '这一局输了');
+  assert.match(guest.get('result-copy').textContent, /你认输了/);
+  assert.match(host.get('result-copy').textContent, /蓝 \d+ : 橙 \d+/);
+  host.get('result-close').click(); // 查看棋盘：弹窗收起，终局信息仍在状态行
+  assert.equal(host.get('result-dialog').open, false);
+  assert.match(host.get('status').textContent, /你赢了/);
+  host.get('result-again').click(); // 走弹窗按钮发起重开
+  assert.ok(guest.get('confirm-dialog').open, 'guest sees the rematch request');
+  guest.get('confirm-ok').click();
+  await host.settle(2); await guest.settle(2);
+  assert.equal(host.save().state.ply, 0, 'fresh board after rematch');
+  assert.equal(host.save().state.winner, 0);
+  assert.equal(host.get('result-dialog').open, false, 'no dialog on the fresh board');
+});
+
+test('invite links (?server=&code=) prefill the room code and join directly', async () => {
+  const hub = createRoomHub();
+  const host = fixture({ hub });
+  host.get('mode-online').click();
+  host.get('net-name').value = '小明';
+  host.get('room-create').click();
+  await host.tick();
+  const code = host.save().online.code;
+
+  const guest = fixture({ hub, search: '?server=' + encodeURIComponent('ws://127.0.0.1:4173/ws') + '&code=' + code });
+  guest.get('mode-online').click(); // 全新存档：直接弹出房间面板
+  assert.equal(guest.get('room-code').value, code, 'room code prefilled from the invite link');
+  assert.match(guest.get('room-status').textContent, /已从邀请链接读取/);
+  guest.get('net-name').value = '小红';
+  guest.get('room-join').click();
+  await guest.settle(2); await host.settle(2);
+  assert.equal(guest.save().mode, 'online');
+  assert.equal(guest.save().online.role, 2);
+  assert.equal(host.save().online.peerName, '小红');
+});
+
+test('the last move carries a highlight class on both sides', async () => {
+  const { host, guest } = await matchUp();
+  const index = E.legalMoves(host.save().state)[0];
+  host.cell(index).click();
+  await host.settle(); await guest.settle();
+  const cls = host.cell(index).className;
+  assert.match(cls, / last/, 'the moved cell is marked as the last move');
+  assert.match(cls, /owner-1/, 'the mover color stays on the cell');
+  assert.match(guest.cell(index).className, / last/, 'the guest board marks it too');
 });
 
 test('an illegal inbound move triggers a log resync instead of corrupting the board', async () => {

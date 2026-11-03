@@ -302,3 +302,38 @@ test('hidden document and pagehide save a paused clock that restores without cha
   assert.equal(restored.save().clock.paused,true);
   assert.equal(restored.save().clock.remaining,99000);
 });
+
+test('a finished save opens the result dialog once; replay restarts from it',async()=>{
+  const finished=E.newGame({size:5});
+  finished.cells=finished.cells.map(()=>({owner:1,count:2}));
+  finished.turn=2;finished.winner=1;finished.moves=[20,0];finished.ply=20;finished.lastMove=12;
+  const f=fixture({rawSave:JSON.stringify({version:2,state:finished,mode:'local',quick:false,sound:true,history:[],clock:E.newClock(5)})});
+  assert.ok(f.get('result-dialog').open,'restoring a finished game shows the result once');
+  assert.equal(f.get('result-title').textContent,'蓝方获胜！');
+  assert.match(f.get('result-copy').textContent,/蓝 50 : 橙 0/);
+  assert.match(f.get('result-copy').textContent,/对方棋子已全部清空/);
+  f.get('result-close').click();
+  assert.equal(f.get('result-dialog').open,false);
+  assert.match(f.get('status').textContent,/蓝方获胜/);
+  f.get('result-again').click(); // → askNew → 确认 → startNew
+  assert.ok(f.get('confirm-dialog').open);
+  f.get('confirm-ok').click();
+  await f.tick();
+  assert.equal(f.save().state.ply,0);
+  assert.equal(f.save().state.winner,0);
+  assert.equal(f.get('result-dialog').open,false,'fresh board shows no dialog');
+});
+
+test('the sound toggle flips the label and persists into the save',async()=>{
+  const f=fixture();
+  assert.equal(f.get('sound-button').textContent,'音效：开');
+  f.get('sound-button').click();
+  assert.equal(f.get('sound-button').textContent,'音效：关');
+  assert.equal(f.save().sound,false);
+  f.get('sound-button').click();
+  assert.equal(f.get('sound-button').textContent,'音效：开');
+  assert.equal(f.save().sound,true);
+  const quiet=fixture({rawSave:JSON.stringify({version:2,state:E.newGame(),mode:'ai',quick:false,sound:false,history:[],clock:E.newClock()})});
+  assert.equal(quiet.get('sound-button').textContent,'音效：关');
+});
+

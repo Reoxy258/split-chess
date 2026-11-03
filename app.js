@@ -14,6 +14,44 @@
     .replace(/\u3000/g, ' ')
     .replace(/[\uff01-\uff5e]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xfee0));
   const normalizeRoomCode = raw => halfWidth(raw).toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 5);
+  /* ---- 音效：Web Audio 振荡器实时合成，零资源文件（离线单文件同样可用）。
+     AudioContext 首次播放时懒创建并尝试 resume；无音频能力的环境
+     （vm 测试沙箱、极老浏览器）静默降级，绝不影响对局本身。 ---- */
+  let sound = true, audio = null;
+  function audioContext() {
+    if (!sound) return null;
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!Ctor) return null;
+    if (!audio) { try { audio = new Ctor(); } catch { return null; } }
+    if (audio.state === 'suspended') { try { audio.resume(); } catch { /* 等待用户手势 */ } }
+    return audio.state === 'closed' ? null : audio;
+  }
+  function tone({ freq, freq2 = 0, type = 'triangle', dur = .09, gain = .12, delay = 0 }) {
+    const ctx = audioContext();
+    if (!ctx) return;
+    try {
+      const t0 = ctx.currentTime + delay;
+      const osc = ctx.createOscillator(), vol = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t0);
+      if (freq2) osc.frequency.exponentialRampToValueAtTime(freq2, t0 + dur);
+      vol.gain.setValueAtTime(.0001, t0);
+      vol.gain.exponentialRampToValueAtTime(gain, t0 + .012);
+      vol.gain.exponentialRampToValueAtTime(.0001, t0 + dur);
+      osc.connect(vol); vol.connect(ctx.destination);
+      osc.start(t0); osc.stop(t0 + dur + .06);
+    } catch { /* 音频尽力而为，失败不打断对局 */ }
+  }
+  /* 蓝方高音、橙方低音；远端落子用 sine 更柔和；夺格双音上扬；
+     胜利上行琶音、失败下行；peer = 对手就位/再来一局邀请的提示铃。 */
+  const SFX = {
+    place(player, remote) { tone({ freq: player === 1 ? 523 : 392, freq2: player === 1 ? 392 : 294, type: remote ? 'sine' : 'triangle', dur: .09, gain: remote ? .08 : .11 }); },
+    turn() { tone({ freq: 740, type: 'sine', dur: .06, gain: .05, delay: .16 }); },
+    capture() { tone({ freq: 660, type: 'square', dur: .05, gain: .06 }); tone({ freq: 880, type: 'square', dur: .07, gain: .05, delay: .06 }); },
+    win() { [523, 659, 784, 1047].forEach((f, i) => tone({ freq: f, dur: .15, gain: .1, delay: i * .11 })); },
+    lose() { tone({ freq: 330, freq2: 247, type: 'sine', dur: .35, gain: .08 }); tone({ freq: 165, type: 'sine', dur: .3, gain: .06, delay: .16 }); },
+    peer() { tone({ freq: 587, dur: .09, gain: .08 }); tone({ freq: 784, dur: .13, gain: .08, delay: .1 }); },
+  };
   let state = E.newGame(), mode = 'ai', history = [], busy = false, thinking = false, epoch = 0, worker = null;
   let quick = matchMedia('(prefers-reduced-motion: reduce)').matches, tutorial = -1, tutorialDone = false, beforeTutorial = null, pending = null;
   // 在线对战：session 传输会话；online 房间信息；inbound 远端事件队列；guestClockAt 计时快照时刻。
@@ -26,7 +64,7 @@
     const saved = JSON.parse(read(KEY));
     if (saved && [1, 2, 3].includes(saved.version) && saved.state?.size >= 5 && saved.state.size <= 10 && E.validateState(saved.state) && ['ai', 'local', 'online'].includes(saved.mode)) {
       state = E.copy(saved.state);
-      clock = saved.version >= 2 && E.validateClock(saved.clock, state.size) ? { ...saved.clock, paused: saved.clock.started } : E.newClock(state.size); mode = saved.mode; quick = typeof saved.quick === 'boolean' ? saved.quick : quick;
+      clock = saved.version >= 2 && E.validateClock(saved.clock, state.size) ? { ...saved.clock, paused: saved.clock.started } : E.newClock(state.size); mode = saved.mode; quick = typeof saved.quick === 'boolean' ? saved.quick : quick; sound = typeof saved.sound === 'boolean' ? saved.sound : sound;
       history = Array.isArray(saved.history) ? saved.history.filter(s => E.validateState(s) && s.size === state.size).map(E.copy).slice(-60) : [];
       if (mode === 'online') history = [];
       if (saved.version === 3 && saved.mode === 'online' && saved.online && typeof saved.online.code === 'string' && saved.online.code.length >= 4 && [1, 2].includes(saved.online.role)) {
@@ -41,18 +79,18 @@
       // 房间还没建立时不落盘：保留玩家此前的单机存档。
       if (!session && !online) return;
       const ok = write(KEY, JSON.stringify({
-        version: 3, state, mode, quick, clock, history: [],
+        version: 3, state, mode, quick, clock, sound, history: [],
         online: { server: session?.url || online?.server || null, code: online?.code || session?.room || null, token: session?.token || online?.token || null, role: online?.role || session?.role || 0, peerName: online?.peerName || '' }
       }));
       $('save-note').textContent = ok ? '在线对局已保存 · 重开页面可重连' : '当前浏览器无法保存';
       return;
     }
-    const ok = write(KEY, JSON.stringify({ version: 2, state, mode, quick, clock, history: history.slice(-60) }));
+    const ok = write(KEY, JSON.stringify({ version: 2, state, mode, quick, clock, sound, history: history.slice(-60) }));
     $('save-note').textContent = ok ? '棋局已自动保存' : '当前浏览器无法保存';
   }
 
   function clockBlocked() {
-    return busy || tutorial >= 0 || document.hidden || ['welcome-dialog', 'rules-dialog', 'confirm-dialog'].some(id => $(id).open);
+    return busy || tutorial >= 0 || document.hidden || ['welcome-dialog', 'rules-dialog', 'confirm-dialog', 'result-dialog'].some(id => $(id).open);
   }
   function renderClock(view = clock) {
     const format = value => { const seconds = Math.ceil(value / 1000); return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0'); };
@@ -213,6 +251,8 @@
     $('undo-button').disabled = !history.length || busy || tutorial >= 0 || state.resultReason === 'time' || mode === 'online';
     $('motion-button').textContent = '连锁动画：' + (quick ? '快速' : '标准');
     $('motion-button').setAttribute('aria-pressed', String(quick));
+    $('sound-button').textContent = '音效：' + (sound ? '开' : '关');
+    $('sound-button').setAttribute('aria-pressed', String(sound));
     $('exit-tutorial').hidden = tutorial < 0;
     $('board-size').disabled = tutorial >= 0 || mode === 'online';
     $('restart-button').hidden = mode === 'online';
@@ -222,6 +262,7 @@
     document.body.classList.toggle('result', !!state.winner && tutorial < 0);
     renderClock();
     reportResultOnce();
+    onGameOver();
   }
   /* 终局上报：房主是棋局权威，把自然终局（点数/清空/超时）报给服务器结算战绩，
      服务器回发 'result' 事件刷新双方显示。同一局只上报一次；认输由服务器直接结算，
@@ -232,6 +273,24 @@
     if (resultKey === key) return;
     resultKey = key;
     session.sendResult({ winner: state.winner, reason: state.resultReason || '', points: E.totals(state).points });
+  }
+  /* 终局收尾：胜负音效 + 结果弹窗（一局只弹一次）。挂在 paint() 里，
+     覆盖所有终局来源：自然终局、认输、超时定胜负、重连回到已结束的棋局。
+     开新局 / 换房间时由 startNew、applyRestart、'room' 事件复位标记。 */
+  let resultShown = false;
+  function onGameOver() {
+    if (!state.winner || tutorial >= 0 || resultShown) return;
+    resultShown = true;
+    const viewer = mode === 'ai' ? 1 : mode === 'online' ? (online?.role || 0) : 0;
+    if (!viewer || state.winner === viewer) SFX.win(); else SFX.lose();
+    const points = E.totals(state).points;
+    const reason = state.resultReason === 'time' ? '时间到，点数定胜负' : state.resultReason === 'resign'
+      ? (mode === 'online' ? (state.winner === online?.role ? '对方认输' : '你认输了') : '一方认输') : '对方棋子已全部清空';
+    const stats = mode === 'online' && statsText(online?.myStats) ? ' · 当前战绩 ' + statsText(online.myStats) : '';
+    $('result-title').textContent = mode === 'local' ? (state.winner === 1 ? '蓝方获胜！' : '橙方获胜！') : viewer && state.winner === viewer ? '你赢了！' : '这一局输了';
+    $('result-copy').textContent = reason + ' · 终局点数 蓝 ' + points[0] + ' : 橙 ' + points[1] + stats;
+    $('result-again').textContent = mode === 'online' ? (session && online && !online.peerGone ? '再来一局' : '离开房间') : '再来一局';
+    if (!$('result-dialog').open) $('result-dialog').showModal();
   }
   function status(text) { $('status').textContent = text; }
   function normalStatus() {
@@ -277,6 +336,7 @@
     const id = epoch, player = state.turn;
     let result;
     try { result = E.applyMove(state, index, { trace: true }); } catch { return; }
+    SFX.place(player, remote); // 落子即响：本地清脆、远端柔和（音高按落子方区分）
     const previous = E.copy(state);
     revealCell(index);
     busy = true; thinking = false; paint();
@@ -312,6 +372,8 @@
     if (result.splits && !state.winner) {
       status('本手分裂 ' + result.splits + ' 次' + (result.captured ? '，夺取 ' + result.captured + ' 格' : '') + ' · ' + (mode === 'ai' && state.turn === 1 ? '轮到你了' : mode === 'ai' ? '轮到电脑' : mode === 'online' ? (state.turn === online?.role ? '轮到你了' : '等待对方落子…') : (state.turn === 1 ? '蓝方' : '橙方') + '落子'));
     }
+    if (result.captured) SFX.capture(); // 夺格提示：双音上扬
+    if (remote && mode === 'online' && tutorial < 0 && !state.winner && online && state.turn === online.role) SFX.turn(); // 对方落完，轮到你
     scheduleAI();
     if (mode === 'online') drainRemote(); // 本手演出结束，继续处理排队的远端事件
   }
@@ -400,7 +462,7 @@
   function startNew(nextMode = mode, size = SIZE) {
     cancelAsync();
     if (tutorial >= 0) { tutorial = -1; beforeTutorial = null; tutorialDone = false; }
-    state = E.newGame({ size }); clock = E.newClock(size); lastTick = performance.now(); history = []; mode = nextMode;
+    state = E.newGame({ size }); clock = E.newClock(size); lastTick = performance.now(); history = []; mode = nextMode; resultShown = false;
     buildBoard();
     $('coach-action').disabled = false;
     paint(); persist(); resetCoach(); normalStatus();
@@ -437,29 +499,53 @@
     code.className = 'code';
     code.textContent = online.code;
     const actions = document.createElement('span');
+    const flash = (btn, okText, restText) => { btn.textContent = okText; setTimeout(() => { btn.textContent = restText; }, 1800); };
     const copy = document.createElement('button');
     copy.className = 'outline';
     copy.textContent = '复制房间码';
-    copy.onclick = () => copyText(online.code);
+    copy.onclick = () => { copyText(online.code); flash(copy, '已复制 ✓', '复制房间码'); };
     actions.append(copy);
+    const link = inviteLink();
+    if (link) { // 好友点开即自动填码，免手动输入
+      const invite = document.createElement('button');
+      invite.className = 'outline';
+      invite.textContent = '复制邀请链接';
+      invite.onclick = () => { copyText(link, '邀请链接'); flash(invite, '链接已复制 ✓', '复制邀请链接'); };
+      actions.append(invite);
+    }
     const hint = document.createElement('span');
-    hint.textContent = '等待对手加入… 好友在「在线对战」里输入此码即可开局。';
+    hint.textContent = '等待对手加入… 把房间码或邀请链接发给好友即可开局。';
     el.append(label, code, actions, hint);
   }
-  function copyText(text) {
+  /* 邀请链接 = 本页地址 + ?server=对战服务器 + &code=房间码。
+     仅 http(s) 页面可生成；file:// 或离线单文件退回纯房间码。 */
+  function inviteLink() {
+    try {
+      if (!/^https?:$/.test(location.protocol)) return null;
+      const server = session?.url || online?.server || (Net ? Net.defaultServerUrl() : null);
+      if (!server) return null;
+      return location.origin + location.pathname + '?server=' + encodeURIComponent(server) + '&code=' + online.code;
+    } catch { return null; }
+  }
+  function copyText(text, label = '房间码') {
     try {
       if (navigator.clipboard?.writeText) {
-        navigator.clipboard.writeText(text).then(() => status('房间码已复制'), () => status('复制失败 · 房间码 ' + text));
+        navigator.clipboard.writeText(text).then(() => status(label + '已复制'), () => status('复制失败 · ' + label + ' ' + text));
         return;
       }
     } catch { /* 剪贴板不可用：提示手动记录 */ }
-    status('请手动记录房间码：' + text);
+    status('请手动记录' + label + '：' + text);
+  }
+  /* 好友点开的邀请链接带着 ?code=：打开房间面板时自动预填。 */
+  function readLinkCode() {
+    try { return normalizeRoomCode(new URLSearchParams(location.search).get('code')); } catch { return ''; }
   }
   function openRoomDialog() {
     if (!Net) { status('此构建不支持在线对战'); return; }
     $('net-name').value = Net.rememberedName();
     $('net-server').value = Net.rememberedServer() || '';
-    $('room-code').value = '';
+    const linked = readLinkCode();
+    $('room-code').value = linked;
     $('room-status').hidden = true;
     $('room-create').disabled = false;
     $('room-join').disabled = false;
@@ -468,6 +554,7 @@
     $('room-server-settings').open = !Net.defaultServerUrl() || !!$('net-server').value;
     $('room-dialog').showModal();
     $('room-code').focus();
+    if (linked) roomDialogNote('已从邀请链接读取房间码 ' + linked + ' · 昵称可留空，点「加入房间」或按回车即可开局');
   }
   function updateServerHelp() {
     if (!Net) return;
@@ -579,7 +666,7 @@
   }
   function applyRestart(size) {
     cancelAsync();
-    inbound = []; rematchAsked = false; guestClockAt = -1; clockBeats = 0; resultKey = '';
+    inbound = []; rematchAsked = false; guestClockAt = -1; clockBeats = 0; resultKey = ''; resultShown = false;
     state = E.newGame({ size }); clock = E.newClock(size); history = []; mode = 'online'; lastTick = performance.now();
     buildBoard();
     $('coach-action').disabled = false;
@@ -604,6 +691,7 @@
         }
         myName = names[data.role - 1] || myName;
         resultKey = '';
+        resultShown = false; // 重连回到已结束的棋局时，允许再展示一次结果
         mode = 'online';
         if (data.resume) reconcile(data.resume);
         else {
@@ -621,6 +709,7 @@
       }
       case 'peer': {
         if (!online) return;
+        if (online.peerGone) SFX.peer(); // 对手就位/归位：提示铃（后台标签页也能听见）
         online.peerGone = false;
         online.peerName = data.name || online.peerName;
         if (data.stats !== undefined) online.foeStats = data.stats; // 对方的服务器战绩
@@ -677,6 +766,7 @@
       }
       case 'rematch-req': {
         if (mode !== 'online' || !session) return;
+        SFX.peer();
         pending = () => { session?.rematchOk(); };
         $('confirm-title').textContent = '对方想再来一局？';
         $('confirm-copy').textContent = '接受后重开同尺寸新棋局，房主仍执蓝方先行。';
@@ -797,6 +887,18 @@
   $('confirm-cancel').onclick = () => { pending = null; $('confirm-dialog').close(); };
   $('confirm-ok').onclick = () => { const action = pending; pending = null; $('confirm-dialog').close(); action?.(); };
   $('confirm-dialog').addEventListener('cancel', () => { pending = null; });
+  $('result-close').onclick = () => { $('result-dialog').close(); }; // 查看棋盘：弹窗收起，终局状态行与战绩仍在
+  $('result-again').onclick = () => { // 复用 coach-action 的终局分支
+    $('result-dialog').close();
+    if (mode === 'online') { if (session && online && !online.peerGone) requestRematch(); else leaveToMenu(); }
+    else askNew(mode);
+  };
+  $('result-dialog').addEventListener('cancel', () => { /* Esc 等同「查看棋盘」 */ });
+  $('sound-button').onclick = () => {
+    sound = !sound;
+    if (sound) SFX.peer(); // 打开即响一声，确认生效（AudioContext 也借此手势解锁）
+    paint(); persist();
+  };
   $('help-button').onclick = () => { pauseMatch(); $('rules-dialog').showModal(); };
   document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => b.closest('dialog').close());
   $('replay-tutorial').onclick = () => { $('rules-dialog').close(); startTutorial(); };
