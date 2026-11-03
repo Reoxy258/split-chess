@@ -22,6 +22,7 @@ test('normalizeUrl completes bare addresses with scheme and /ws path', () => {
   assert.equal(Net.normalizeUrl('ws://127.0.0.1:4174'), 'ws://127.0.0.1:4174/ws');
   assert.equal(Net.normalizeUrl('ws://127.0.0.1:4174/ws'), 'ws://127.0.0.1:4174/ws'); // path preserved
   assert.equal(Net.normalizeUrl('https://split-chess.onrender.com'), 'ws://split-chess.onrender.com/ws'); // prefix stripped
+  assert.equal(Net.normalizeUrl('１２７．０．０．１：４１７４'), 'ws://127.0.0.1:4174/ws'); // CJK IME full-width address
   assert.equal(Net.normalizeUrl(''), null);
   assert.equal(Net.normalizeUrl(null), null);
   assert.equal(Net.normalizeUrl('   '), null);
@@ -273,6 +274,51 @@ test('player ids ride along; resignation settles server-side stats on both clien
   assert.match(guest.get('name-1').textContent, /小明（1胜0负）/, 'guest sees the host record settle live');
   assert.match(host.get('status').textContent, /战绩 1胜0负/);
   assert.match(guest.get('status').textContent, /战绩 0胜1负/);
+});
+
+test('room codes typed full-width by a CJK IME are cleaned and join fine', async () => {
+  const hub = createRoomHub();
+  const host = fixture({ hub }), guest = fixture({ hub });
+  host.get('mode-online').click();
+  host.get('net-name').value = '小明';
+  host.get('room-create').click();
+  await host.tick();
+  const code = host.save().online.code;
+  const fullWidth = [...code].map(ch => String.fromCharCode(ch.charCodeAt(0) + 0xfee0)).join('');
+
+  guest.get('mode-online').click();
+  guest.get('net-name').value = '小红';
+  const field = guest.get('room-code');
+  field.value = fullWidth;
+  field.listeners.input({ target: field, isComposing: true }); // mid-composition: must not touch the field
+  assert.equal(field.value, fullWidth, 'composition input is never interrupted');
+  field.listeners.input({ target: field, isComposing: false }); // committed: collapse to half-width
+  assert.equal(field.value, code, 'full-width code collapses as you type');
+  guest.get('room-join').click();
+  await guest.tick(); await host.tick();
+  assert.equal(guest.save().mode, 'online');
+  assert.equal(guest.save().online.code, code);
+  assert.equal(host.save().online.peerName, '小红');
+});
+
+test('join falls back to cleaning the raw field value (spaces, full-width, junk)', async () => {
+  const hub = createRoomHub();
+  const host = fixture({ hub }), guest = fixture({ hub });
+  host.get('mode-online').click();
+  host.get('net-name').value = '小明';
+  host.get('room-create').click();
+  await host.tick();
+  const code = host.save().online.code;
+  const noisy = ' ' + [...code].map(ch => String.fromCharCode(ch.charCodeAt(0) + 0xfee0)).join('') + '！';
+
+  guest.get('mode-online').click();
+  guest.get('net-name').value = '小红';
+  guest.get('room-code').value = noisy; // no input events fired (paste path)
+  guest.get('room-join').click();
+  await guest.tick(); await host.tick();
+  assert.equal(guest.save().mode, 'online', 'paste-noise is cleaned at submit time');
+  assert.equal(guest.get('room-code').value, code);
+  assert.equal(host.save().online.peerName, '小红');
 });
 
 test('an illegal inbound move triggers a log resync instead of corrupting the board', async () => {

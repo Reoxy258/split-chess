@@ -32,9 +32,14 @@
     return id;
   }
 
+  /* 中文输入法常把地址敲成全角（ｗｓ：／／…）；地址解析前先折叠回半角。 */
+  const halfWidth = text => String(text ?? '')
+    .replace(/\u3000/g, ' ')
+    .replace(/[\uff01-\uff5e]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xfee0));
+
   function normalizeUrl(raw) {
     if (raw == null) return null;
-    let url = String(raw).trim();
+    let url = halfWidth(raw).trim();
     if (!url) return null;
     if (!/^wss?:\/\//i.test(url)) {
       // Bare host (optionally "host:port"): pick the scheme that matches the page

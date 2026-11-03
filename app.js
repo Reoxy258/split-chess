@@ -8,6 +8,12 @@
   const KEY = 'split-chess.save.v1', SEEN = 'split-chess.learned.v1';
   const read = key => { try { return localStorage.getItem(key); } catch { return null; } };
   const write = (key, value) => { try { localStorage.setItem(key, value); return true; } catch { return false; } };
+  /* 中文输入法会把字母数字敲成全角（Ｄ３ＤＧＳ），房间码与服务器地址因此校验失败。
+     halfWidth 做全角→半角折叠；normalizeRoomCode 在此之上只留码字符并截到 5 位。 */
+  const halfWidth = text => String(text ?? '')
+    .replace(/\u3000/g, ' ')
+    .replace(/[\uff01-\uff5e]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xfee0));
+  const normalizeRoomCode = raw => halfWidth(raw).toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 5);
   let state = E.newGame(), mode = 'ai', history = [], busy = false, thinking = false, epoch = 0, worker = null;
   let quick = matchMedia('(prefers-reduced-motion: reduce)').matches, tutorial = -1, tutorialDone = false, beforeTutorial = null, pending = null;
   // 在线对战：session 传输会话；online 房间信息；inbound 远端事件队列；guestClockAt 计时快照时刻。
@@ -700,6 +706,14 @@
       $('confirm-dialog').showModal();
     } else leaveToMenu();
   };
+  /* 输入即清洗（全角→半角、剔除非码字符）：手机输入法敲全角也能实时看到正确形态。
+     组合输入（拼音候选上屏）期间不干预，避免打断输入法。 */
+  $('room-code').addEventListener('input', event => {
+    if (event.isComposing) return;
+    const el = event.target;
+    const cleaned = normalizeRoomCode(el.value);
+    if (cleaned !== el.value) el.value = cleaned;
+  });
   $('room-create').onclick = () => {
     if (!Net) return;
     myName = Net.clampName($('net-name').value);
@@ -713,7 +727,8 @@
   };
   $('room-join').onclick = () => {
     if (!Net) return;
-    const code = $('room-code').value.trim().toUpperCase();
+    $('room-code').value = normalizeRoomCode($('room-code').value); // 兜底：全角/杂质清洗
+    const code = $('room-code').value;
     if (!/^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{5}$/.test(code)) { roomDialogNote('房间码是 5 位：数字与大写字母（不含 0/1/I/L/O）。', { error: true }); return; }
     myName = Net.clampName($('net-name').value);
     Net.rememberName(myName);
