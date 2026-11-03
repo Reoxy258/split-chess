@@ -36,19 +36,54 @@
 .net-line.warn::before{background:#e0a33c;animation:netblink 1.2s ease infinite}
 .net-line.down::before{background:#cf5f47}
 @keyframes netblink{50%{opacity:.35}}
-#room-dialog .room-intro{font-size:12px;color:#7c8883;line-height:1.9;margin:0 0 18px}
-.room-form{display:grid;grid-template-columns:76px 1fr;gap:10px 12px;align-items:center;margin:0 0 4px}
-.room-form label{font-size:11px;color:#5d6e63}
-.room-form input{font:inherit;font-size:13px;color:var(--ink);border:1px solid #dbe4da;border-radius:9px;padding:10px 12px;background:#f9fbf7;min-height:44px;width:100%}
-.room-form input:focus-visible{outline:3px solid #8aacec;outline-offset:2px}
-.room-server-note{margin:4px 0 16px}
-.room-actions{display:grid;gap:10px}
-.room-actions .primary{width:100%}
-.room-join{display:flex;gap:8px}
-.room-join input{font:inherit;font-size:15px;letter-spacing:3px;text-transform:uppercase;text-align:center;color:var(--ink);border:1px solid #dbe4da;border-radius:9px;padding:10px 4px;background:#f9fbf7;min-height:44px;flex:1;min-width:0}
-.room-join input:focus-visible{outline:3px solid #8aacec;outline-offset:2px}
-.room-join button{min-width:104px}
-.room-status{margin-top:18px;padding:14px;border:1px solid #e4eade;border-radius:12px;background:#f5f7f2;font-size:12px;line-height:1.9;color:#5d6e63;display:flex;flex-direction:column;gap:6px;align-items:flex-start}
-.room-status .code{font-size:24px;font-weight:800;letter-spacing:6px;color:var(--blue);line-height:1.2}
+/* Room lobby: explicit grid tracks keep the invite field usable at every width. */
+#room-dialog{width:min(480px,calc(100vw - 24px));padding:26px;border:1px solid #dce5dc;box-shadow:0 24px 80px #10271c35}
+#room-dialog h2{font-size:28px;margin:18px 0 8px;letter-spacing:-1px}
+#room-dialog .room-intro{font-size:13px;color:#65776c;line-height:1.7;margin:0 0 22px}
+.room-field{display:grid;gap:8px;min-width:0}
+.room-field label,.room-join-card label{font-size:12px;font-weight:650;color:#3f5549}
+.room-field label span,.room-join-card label span{font-size:11px;font-weight:400;color:#748277;margin-left:8px}
+.room-field input,.room-join input{font:inherit;font-size:16px;min-width:0;width:100%;min-height:48px;border:1px solid #d6e1d6;border-radius:10px;padding:12px;background:#fff;color:var(--ink)}
+#room-dialog input:focus-visible{outline:3px solid #a8c1f0;outline-offset:2px;border-color:var(--blue)}
+#room-dialog input[aria-invalid="true"]{border-color:#c75b38}
+.room-name{margin-bottom:20px}
+.room-join-card{padding:18px;border:1px solid #dce6d9;border-radius:16px;background:#f0f5ed}
+.room-card-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px;margin-bottom:18px}
+.room-card-heading h3{font-size:16px;margin:0;color:#2d4839}
+.room-card-heading>span{font-size:11px;color:#6d7e70}
+.room-join{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;margin-top:8px}
+.room-join input{font-size:20px;font-weight:650;letter-spacing:3px;text-transform:uppercase;text-align:center;min-height:52px}
+.room-join input::placeholder{font-size:14px;font-weight:400;letter-spacing:1px;color:#8a978d}
+.room-join button{width:auto;white-space:nowrap;justify-content:center;padding:12px 16px}
+#room-dialog .room-hint{font-size:12px;line-height:1.75;color:#6b7b70;margin:10px 0 0;overflow-wrap:anywhere}
+.room-divider{display:flex;align-items:center;gap:12px;margin:18px 0;font-size:11px;color:#819084}
+.room-divider::before,.room-divider::after{content:"";height:1px;background:#e0e7dd;flex:1}
+.room-create{background:white;padding:15px 18px;border-radius:13px}
+.room-create strong{display:block;font-size:14px}
+.room-create small{display:block;margin-top:6px;font-size:11px;font-weight:400;color:#768578}
+.room-create>span:last-child{font-size:23px;color:#6c826f}
+.room-server-settings{margin-top:22px;border-top:1px solid #e1e8de;padding-top:6px}
+.room-server-settings>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;min-height:44px;font-size:12px;color:#536959;list-style:none}
+.room-server-settings>summary::-webkit-details-marker{display:none}
+#room-server-summary{font-size:11px;color:#758575;text-align:right}
+#room-server-summary::after{content:" ＋"}
+.room-server-settings[open] #room-server-summary::after{content:" −"}
+.room-server-body{padding:0 0 4px;gap:10px}
+#room-dialog #room-server-context{margin:0 0 2px}
+#room-dialog #room-server-help{margin:0}
+.room-deploy-help{font-size:12px;line-height:1.8;border-top:1px dashed #dce5d9;padding-top:12px}
+.room-deploy-help summary{cursor:pointer;color:#3c5b46;min-height:32px}
+.room-deploy-help ol{margin:8px 0 12px;padding-left:20px;color:#68796c}
+.room-deploy-help li+li{margin-top:10px}
+.room-deploy-help a{color:#2866c9;text-decoration:underline;text-underline-offset:3px}
+.room-status{margin-top:16px;padding:16px;border:1px solid #dbe5d7;border-radius:13px;background:#eff5eb;font-size:13px;line-height:1.8;color:#45604a;display:flex;flex-direction:column;gap:8px;align-items:flex-start;overflow-wrap:anywhere}
+.room-status .code{font-size:30px;font-weight:800;letter-spacing:7px;color:var(--blue);line-height:1.3}
 .room-status.error{border-color:#efc6b0;background:#fdf3ed;color:#a34a2e}
+@media(max-width:400px){
+  #room-dialog{padding:20px}
+  #room-dialog h2{font-size:25px}
+  .room-join-card{padding:14px}
+  .room-join{grid-template-columns:minmax(0,1fr)}
+  .room-join button{width:100%;min-height:48px}
+}
 .utility #resign-button{color:#c2532f}

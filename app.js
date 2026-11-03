@@ -463,12 +463,49 @@
     $('room-status').hidden = true;
     $('room-create').disabled = false;
     $('room-join').disabled = false;
+    $('room-code').setAttribute('aria-invalid', 'false');
+    updateServerHelp();
+    $('room-server-settings').open = !Net.defaultServerUrl() || !!$('net-server').value;
     $('room-dialog').showModal();
+    $('room-code').focus();
+  }
+  function updateServerHelp() {
+    if (!Net) return;
+    const custom = $('net-server').value.trim();
+    const automatic = Net.defaultServerUrl();
+    $('room-server-summary').textContent = custom ? '使用指定服务器' : automatic ? '使用当前网站' : '需要填写地址';
+    $('room-server-context').textContent = custom
+      ? '将连接你填写的服务器。请确认好友也在使用同一地址。'
+      : automatic ? '已选择：' + automatic + '。创建或加入房间时会连接，无需另外填写。'
+      : '此页面没有内置联机服务。请填写已部署的服务器地址，或直接打开好友分享的游戏网址。';
+  }
+  function roomServerUrl() {
+    const raw = $('net-server').value.trim();
+    const url = raw ? Net.normalizeUrl(raw) : Net.defaultServerUrl();
+    if (!url) {
+      $('room-server-settings').open = true;
+      roomDialogNote(raw ? '服务器地址格式不正确。请输入域名、IP:端口或完整的 ws:// / wss:// 地址。'
+        : '请先设置对战服务器，或打开好友分享的游戏网址。展开下方连接设置可查看操作说明。', { error: true });
+      $('net-server').focus();
+      return null;
+    }
+    Net.rememberServer(raw);
+    return url;
   }
   function startOnlineSession(url, intent) {
     teardownOnline();
     session = new Net.Session({ url, onEvent: netEvent });
     intent(session);
+    const connecting = session;
+    // Only the initial join/create has a deadline; established games retain reconnect behavior.
+    setTimeout(() => {
+      if (session !== connecting || online || !connecting.active) return;
+      connecting.giveUp();
+      $('room-create').disabled = false;
+      $('room-join').disabled = false;
+      $('room-server-settings').open = true;
+      roomDialogNote('连接超时，尚未进入房间。请确认服务器正在运行、端口已放行，且 /ws 已转发；HTTPS 页面需要支持 WSS 的服务器。检查地址后可重新尝试。', { error: true });
+    }, 10000);
   }
   function teardownOnline() {
     if (session) { session.leave(); session = null; }
@@ -708,19 +745,32 @@
   };
   /* 输入即清洗（全角→半角、剔除非码字符）：手机输入法敲全角也能实时看到正确形态。
      组合输入（拼音候选上屏）期间不干预，避免打断输入法。 */
-  $('room-code').addEventListener('input', event => {
+  function cleanRoomInput(event) {
     if (event.isComposing) return;
     const el = event.target;
     const cleaned = normalizeRoomCode(el.value);
-    if (cleaned !== el.value) el.value = cleaned;
+    if (cleaned !== el.value) {
+      const caret = normalizeRoomCode(el.value.slice(0, el.selectionStart ?? el.value.length)).length;
+      el.value = cleaned;
+      el.setSelectionRange?.(caret, caret);
+    }
+    el.setAttribute('aria-invalid', 'false');
+  }
+  $('room-code').addEventListener('input', cleanRoomInput);
+  $('room-code').addEventListener('compositionend', cleanRoomInput);
+  $('room-code').addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) {
+      event.preventDefault();
+      $('room-join').click();
+    }
   });
+  $('net-server').addEventListener('input', updateServerHelp);
   $('room-create').onclick = () => {
     if (!Net) return;
     myName = Net.clampName($('net-name').value);
     Net.rememberName(myName);
-    const url = Net.normalizeUrl($('net-server').value) || Net.defaultServerUrl();
-    if (!url) { roomDialogNote('此页面没有内置对战服务：请填写自建服务器地址（部署说明见 README），或用服务器地址打开本页。', { error: true }); return; }
-    Net.rememberServer($('net-server').value.trim());
+    const url = roomServerUrl();
+    if (!url) return;
     roomDialogNote('正在连接 ' + url + ' …');
     $('room-create').disabled = true; $('room-join').disabled = true;
     startOnlineSession(url, s => s.create({ size: SIZE, name: myName, id: myId }));
@@ -729,12 +779,17 @@
     if (!Net) return;
     $('room-code').value = normalizeRoomCode($('room-code').value); // 兜底：全角/杂质清洗
     const code = $('room-code').value;
-    if (!/^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{5}$/.test(code)) { roomDialogNote('房间码是 5 位：数字与大写字母（不含 0/1/I/L/O）。', { error: true }); return; }
+    if (!/^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{5}$/.test(code)) {
+      $('room-code').setAttribute('aria-invalid', 'true');
+      $('room-code').focus();
+      roomDialogNote(code.length !== 5 ? '请输入好友分享的 5 位邀请码，例如 A2B3C。'
+        : '邀请码不含数字 0、1 或字母 I、L、O，请向好友核对或直接复制。', { error: true });
+      return;
+    }
     myName = Net.clampName($('net-name').value);
     Net.rememberName(myName);
-    const url = Net.normalizeUrl($('net-server').value) || Net.defaultServerUrl();
-    if (!url) { roomDialogNote('此页面没有内置对战服务：请填写自建服务器地址。', { error: true }); return; }
-    Net.rememberServer($('net-server').value.trim());
+    const url = roomServerUrl();
+    if (!url) return;
     roomDialogNote('正在加入房间 ' + code + ' …');
     $('room-create').disabled = true; $('room-join').disabled = true;
     startOnlineSession(url, s => s.join({ code, name: myName, token: online?.code === code ? online.token : null, id: myId }));
