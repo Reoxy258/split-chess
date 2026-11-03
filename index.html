@@ -7,10 +7,10 @@
   <meta name="description" content="一颗落子，一场连锁。满四分裂、吞噬夺棋，随时来一局的休闲棋类小游戏。支持人机与同机双人。">
   <title>分裂棋 · 一颗落子，一场连锁</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%232d69e8'/%3E%3Cg fill='white'%3E%3Ccircle cx='22' cy='22' r='7'/%3E%3Ccircle cx='42' cy='22' r='7'/%3E%3Ccircle cx='22' cy='42' r='7'/%3E%3Ccircle cx='42' cy='42' r='7'/%3E%3C/g%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=1.4.1">
+  <link rel="stylesheet" href="style.css?v=1.4.2">
   <script src="engine.js?v=1.3.0" defer></script>
-  <script src="net.js?v=1.3.0" defer></script>
-  <script src="app.js?v=1.3.0" defer></script>
+  <script src="net.js?v=1.4.2" defer></script>
+  <script src="app.js?v=1.4.2" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -68,20 +68,45 @@
   </div>
   <dialog id="rules-dialog" aria-labelledby="rules-title"><div class="dialog-top"><span class="eyebrow">HOW TO PLAY</span><button data-close class="close" aria-label="关闭玩法说明">×</button></div><h2 id="rules-title">四点，改变局面。</h2><ol class="rules-list"><li><b>轮流加一点</b><p>只能点空格或己方格子；不能直接在敌格落子。</p></li><li><b>满四就分裂</b><p>每次消耗四点，向上下左右各送出一点。稳定棋格为一至三点，多收到的点会保留。</p></li><li><b>吞噬并连锁</b><p>扩散碰到敌格，整格变成你的颜色，原有点数保留再相加。满四继续分裂。</p></li><li><b>消灭对手获胜</b><p>双方都落过子后，在完整连锁结束时，清空对方全部棋子即获胜。边角统一满四；飞出棋盘的点消失。</p></li><li><b>限时比点数</b><p>5～10阶棋盘分别限时3、4、5、6、8、10分钟；每手15、18、20、22、25、30秒，超时跳过。整局到时比较所有棋子的点数总和（不是占格数），同分加时一分钟，仍同分则继续加时。连锁动画、暂停、教程和后台停表；返回或刷新后点击继续。首次落子或点击开始计时。</p></li></ol><button id="replay-tutorial" class="primary">动手试试 · 互动教程 →</button></dialog>
   <dialog id="confirm-dialog" aria-labelledby="confirm-title"><span class="eyebrow">A FRESH START</span><h2 id="confirm-title">重新开始这一局？</h2><p id="confirm-copy">当前进度会被新棋局替换。</p><div class="dialog-actions"><button id="confirm-cancel" class="outline">保留当前棋局</button><button id="confirm-ok" class="primary">开始新棋局</button></div></dialog>
-  <dialog id="room-dialog" aria-labelledby="room-title">
-    <div class="dialog-top"><span class="eyebrow">ONLINE MATCH</span><button data-close class="close" aria-label="关闭房间面板">×</button></div>
-    <h2 id="room-title">在线对战 · 与好友连线</h2>
-    <p class="room-intro">创建房间得到 5 位房间码，发给好友；对方输入同一码即开局。你执蓝方先行，规则与计时同单机版。</p>
-    <div class="room-form">
-      <label for="net-name">昵称</label><input id="net-name" maxlength="12" placeholder="可留空" autocomplete="off">
-      <label for="net-server">对战服务器</label><input id="net-server" placeholder="留空＝当前页面服务器" autocomplete="off">
-      <p class="muted room-server-note">GitHub Pages 在线版需填自建服务器地址（见 README 部署说明）；只填域名即可，自动补全协议与路径。自托管版留空即可。</p>
+  <dialog id="room-dialog" aria-labelledby="room-title" aria-describedby="room-intro">
+    <div class="dialog-top"><span class="eyebrow">好友对局 · ONLINE MATCH</span><button data-close class="close" aria-label="关闭房间面板">×</button></div>
+    <h2 id="room-title">和好友，来一局。</h2>
+    <p id="room-intro" class="room-intro">分享一个邀请码，就能在同一张棋盘上见面。</p>
+    <div class="room-field room-name">
+      <label for="net-name">你的昵称 <span>选填</span></label>
+      <input id="net-name" maxlength="12" placeholder="让好友认出你" autocomplete="nickname">
     </div>
-    <div class="room-actions">
-      <button id="room-create" class="primary">创建房间</button>
-      <div class="room-join"><input id="room-code" maxlength="5" placeholder="房间码" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false"><button id="room-join" class="outline">加入房间</button></div>
-    </div>
-    <div id="room-status" class="room-status" hidden></div>
+    <section class="room-join-card" aria-labelledby="room-join-title">
+      <div class="room-card-heading"><h3 id="room-join-title">已有邀请？</h3><span>加入好友的房间</span></div>
+      <label for="room-code">邀请码 <span>5 位字母或数字</span></label>
+      <div class="room-join">
+        <input id="room-code" maxlength="32" placeholder="例如 A2B3C" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" inputmode="text" aria-describedby="room-code-hint" enterkeyhint="go">
+        <button id="room-join" class="primary" type="button">加入房间 <span aria-hidden="true">→</span></button>
+      </div>
+      <p id="room-code-hint" class="room-hint">支持直接粘贴；小写会自动转成大写。</p>
+    </section>
+    <div class="room-divider"><span>或者，由你发起</span></div>
+    <button id="room-create" class="outline room-create" type="button"><span><strong>创建房间</strong><small>获得邀请码，发给好友一起玩</small></span><span aria-hidden="true">＋</span></button>
+    <div id="room-status" class="room-status" role="status" aria-live="polite" hidden></div>
+    <details id="room-server-settings" class="room-server-settings">
+      <summary><span>连接设置</span><span id="room-server-summary">使用当前网站</span></summary>
+      <div class="room-server-body room-field">
+        <p id="room-server-context" class="room-hint"></p>
+        <label for="net-server">对战服务器地址 <span>通常无需填写</span></label>
+        <input id="net-server" placeholder="例如 splitchess.cn 或 120.26.27.182:8080" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="room-server-help">
+        <p id="room-server-help" class="room-hint">从游戏服务器打开本页时，留空即可。手动填写时可用域名、IP:端口或完整的 ws:// / wss:// 地址；双方必须连接同一台服务器。</p>
+        <details class="room-deploy-help">
+          <summary>还没有服务器，或连接不上？</summary>
+          <ol>
+            <li><b>只是想和好友玩：</b>请好友分享游戏网址，双方打开同一个网址，再输入邀请码。</li>
+            <li><b>从 GitHub Pages 或离线文件打开：</b>这里仅有游戏页面，需要填写已经部署的对战服务器地址。</li>
+            <li><b>自己部署：</b>使用 Node 24 运行项目，配置 HOST=0.0.0.0 和 PORT=8080，放行对应端口；打开 /healthz 应看到 ok: true。</li>
+            <li><b>使用 HTTPS 域名：</b>Nginx 还需转发 /ws 的 WebSocket 连接并配置有效证书。HTTPS 页面只能连接支持 WSS 的服务器。</li>
+          </ol>
+          <a href="https://github.com/Reoxy258/split-chess#自建对战服务器vps-持久化" target="_blank" rel="noopener noreferrer">查看完整部署说明 ↗</a>
+        </details>
+      </div>
+    </details>
   </dialog>
   <dialog id="welcome-dialog" aria-labelledby="welcome-title"><div class="dialog-top"><span class="eyebrow">WELCOME TO SPLIT CHESS</span><button id="welcome-skip" class="close" aria-label="跳过教程介绍">×</button></div><div class="welcome-symbol" aria-hidden="true">✣</div><h2 id="welcome-title">一点蓄力，四点出击。</h2><p>把棋子连成一场漂亮的连锁，<br>让对手的棋子成为你的力量。</p><button id="welcome-learn" class="primary">花一分钟，动手学会 →</button><button id="welcome-play" class="text-button">直接开始对局</button></dialog>
   <script>if (!('noModule' in HTMLScriptElement.prototype)) document.body.innerHTML = '<p>请使用新版浏览器打开分裂棋。</p>';</script>

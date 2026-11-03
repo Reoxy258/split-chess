@@ -21,7 +21,11 @@ test('normalizeUrl completes bare addresses with scheme and /ws path', () => {
   assert.equal(Net.normalizeUrl(' 127.0.0.1:4174 '), 'ws://127.0.0.1:4174/ws');
   assert.equal(Net.normalizeUrl('ws://127.0.0.1:4174'), 'ws://127.0.0.1:4174/ws');
   assert.equal(Net.normalizeUrl('ws://127.0.0.1:4174/ws'), 'ws://127.0.0.1:4174/ws'); // path preserved
-  assert.equal(Net.normalizeUrl('https://split-chess.onrender.com'), 'ws://split-chess.onrender.com/ws'); // prefix stripped
+  assert.equal(Net.normalizeUrl('https://split-chess.onrender.com'), 'wss://split-chess.onrender.com/ws'); // preserve TLS intent
+  assert.equal(Net.normalizeUrl('localhost:8080'), 'ws://localhost:8080/ws');
+  assert.equal(Net.normalizeUrl('splitchess.cn:8080'), 'ws://splitchess.cn:8080/ws');
+  assert.equal(Net.normalizeUrl('http://120.26.27.182:8080'), 'ws://120.26.27.182:8080/ws');
+  for (const invalid of ['https://', 'not a host', 'ftp://example.com', 'ws://user:secret@example.com', 'ws://example.com:99999']) assert.equal(Net.normalizeUrl(invalid), null);
   assert.equal(Net.normalizeUrl('１２７．０．０．１：４１７４'), 'ws://127.0.0.1:4174/ws'); // CJK IME full-width address
   assert.equal(Net.normalizeUrl(''), null);
   assert.equal(Net.normalizeUrl(null), null);
@@ -29,7 +33,7 @@ test('normalizeUrl completes bare addresses with scheme and /ws path', () => {
 });
 
 test('normalizeUrl upgrades to wss on https pages', () => {
-  const ctx = { location: { protocol: 'https:' } };
+  const ctx = { location: { protocol: 'https:' }, URL };
   vm.createContext(ctx);
   vm.runInContext(netSource, ctx);
   const NetHttps = ctx.SplitChessNet;
@@ -64,7 +68,7 @@ globalThis.WebSocket = class {
 };
 `;
 
-function fixture({ rawSave, hub }) {
+function fixture({ rawSave, hub, pageLocation }) {
   const ids = new Map(), timers = [], events = {}, store = new Map(), sockets = [];
   const intervals = [], documentEvents = {};
   let now = 0;
@@ -100,13 +104,14 @@ function fixture({ rawSave, hub }) {
     setTimeout: (fn, delay) => { timers.push({ fn, delay }); return timers.length; },
     clearTimeout: () => {},
     location: { protocol: 'http:', host: '127.0.0.1:4173', hostname: '127.0.0.1', search: '', href: 'http://127.0.0.1:4173/' },
-    URLSearchParams,
+    URLSearchParams, URL,
     __hub: hub,
     __sockets: sockets,
     addEventListener: (k, v) => { events[k] = v; },
     console: { log() {}, error() {} },
   };
   sandbox.window = sandbox;
+  if (pageLocation) sandbox.location = pageLocation;
   const context = vm.createContext(sandbox);
   vm.runInContext(netSource, context);
   vm.runInContext(WS_CLASS, context);
@@ -319,6 +324,58 @@ test('join falls back to cleaning the raw field value (spaces, full-width, junk)
   assert.equal(guest.save().mode, 'online', 'paste-noise is cleaned at submit time');
   assert.equal(guest.get('room-code').value, code);
   assert.equal(host.save().online.peerName, '小红');
+});
+
+test('composition end normalizes invite and Enter joins without consuming IME confirmation', async () => {
+  const hub = createRoomHub(), host = fixture({ hub }), guest = fixture({ hub });
+  host.get('mode-online').click(); host.get('room-create').click(); await host.tick();
+  const code = host.save().online.code;
+  guest.get('mode-online').click();
+  const field = guest.get('room-code');
+  field.value = [...code.toLowerCase()].map(ch => String.fromCharCode(ch.charCodeAt(0) + 0xfee0)).join('');
+  field.listeners.keydown({ key: 'Enter', isComposing: true });
+  assert.equal(guest.sockets.length, 0);
+  field.listeners.compositionend({ target: field });
+  assert.equal(field.value, code);
+  let prevented = false;
+  field.listeners.keydown({ key: 'Enter', preventDefault() { prevented = true; } });
+  await guest.tick();
+  assert.equal(prevented, true);
+  assert.equal(guest.save().online.code, code);
+});
+
+test('Pages requires a server and malformed custom addresses never silently use the current host', () => {
+  const hub = createRoomHub();
+  const pages = fixture({ hub, pageLocation: { protocol: 'https:', hostname: 'reoxy258.github.io', host: 'reoxy258.github.io', search: '' } });
+  pages.get('mode-online').click();
+  assert.equal(pages.get('room-server-settings').open, true);
+  assert.match(pages.get('room-server-context').textContent, /没有内置联机服务/);
+  pages.get('room-create').click();
+  assert.equal(pages.sockets.length, 0);
+  assert.match(pages.get('room-status').textContent, /请先设置/);
+  const hosted = fixture({ hub });
+  hosted.get('mode-online').click();
+  assert.equal(hosted.get('room-server-settings').open, false);
+  hosted.get('net-server').value = 'https://';
+  hosted.get('room-create').click();
+  assert.equal(hosted.sockets.length, 0);
+  assert.match(hosted.get('room-status').textContent, /格式不正确/);
+});
+
+test('initial connection timeout restores actions and allows a successful retry', async () => {
+  const hub = createRoomHub(), app = fixture({ hub });
+  app.get('mode-online').click();
+  app.get('room-create').click();
+  app.sockets[0].readyState = 3; // simulate a connection which never opens
+  await app.tick(); await app.tick();
+  assert.match(app.get('room-status').textContent, /连接超时/);
+  assert.equal(app.get('room-create').disabled, false);
+  assert.equal(app.get('room-join').disabled, false);
+  app.get('room-create').click();
+  await app.tick();
+  assert.ok(app.save().online.code);
+  await app.tick(); // completed sessions ignore the initial deadline
+  assert.doesNotMatch(app.get('room-status').textContent, /连接超时/);
 });
 
 test('an illegal inbound move triggers a log resync instead of corrupting the board', async () => {
